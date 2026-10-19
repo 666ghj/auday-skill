@@ -4,11 +4,13 @@
 
 <h1 align="center">Auday Skill</h1>
 
-<p align="center">Bring what Auday knows into your workflow.</p>
+<p align="center">Bring what Auday knows into your workflow</p>
 
 <p align="center">
   <strong>English</strong> &nbsp;·&nbsp; <a href="README.zh-CN.md">简体中文</a> &nbsp;·&nbsp; <a href="README.ja.md">日本語</a>
 </p>
+
+**Auday data travels directly between your iPhone and Mac over an encrypted local protocol, without passing through any cloud relay server.**
 
 Use your desktop AI assistant to find a conversation, connect ideas across your memories, prepare a project brief, or explore recordings with your Mac's compute. Phone data stays read-only, with sources attached to the information you use.
 

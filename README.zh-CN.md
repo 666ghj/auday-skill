@@ -4,11 +4,13 @@
 
 <h1 align="center">Auday Skill</h1>
 
-<p align="center">把 Auday 所知，接入你的工作流。</p>
+<p align="center">把 Auday 所知，接入你的工作流</p>
 
 <p align="center">
   <a href="README.md">English</a> &nbsp;·&nbsp; <strong>简体中文</strong> &nbsp;·&nbsp; <a href="README.ja.md">日本語</a>
 </p>
+
+**iPhone 与 Mac 通过本地加密协议直接传输 Auday 数据，不经过任何云端服务器中转。**
 
 让你常用的桌面 AI 助手查找讨论、关联记忆、整理项目简报，或借助 Mac 的算力深入分析录音。手机数据始终只读，使用的信息保留来源。
 

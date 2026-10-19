@@ -4,11 +4,13 @@
 
 <h1 align="center">Auday Skill</h1>
 
-<p align="center">Auday が知っていることを、あなたのワークフローへ。</p>
+<p align="center">Auday が知っていることを、あなたのワークフローへ</p>
 
 <p align="center">
   <a href="README.md">English</a> &nbsp;·&nbsp; <a href="README.zh-CN.md">简体中文</a> &nbsp;·&nbsp; <strong>日本語</strong>
 </p>
+
+**Auday のデータは、iPhone と Mac の間でローカルの暗号化プロトコルを使って直接転送され、クラウドサーバーを経由しません。**
 
 いつものデスクトップ AI アシスタントで会話を探し、記憶どうしを結びつけ、プロジェクトの概要をまとめる。Mac の計算資源を使って録音を詳しく分析することもできます。iPhone のデータへのアクセスは常に読み取り専用で、利用する情報には出典が保持されます。
 

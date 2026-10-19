@@ -8,6 +8,8 @@ license: MIT
 
 Bring what Auday knows into the user's workflow. Use the user's language when responding.
 
+The iPhone and Mac exchange Auday data directly over an encrypted local protocol, with no cloud server relaying that device-to-device transfer.
+
 ## Start here
 
 The bundled client runs on macOS and requires a compatible iPhone app with **Connect to your workflow / 接入你的工作流**. Installing this skill does not add that feature to the phone. If the page is missing, explain the companion requirement; do not claim access to recordings or fall back to extracting the phone's private container.
