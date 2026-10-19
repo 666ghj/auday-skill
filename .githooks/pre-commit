@@ -1,0 +1,6 @@
+#!/bin/sh
+# Auday Git guard v1
+set -eu
+repo_root=$(git rev-parse --show-toplevel)
+python3 "$repo_root/tools/git/check_staged.py" --staged
+exec python3 "$repo_root/tools/verify_public.py"

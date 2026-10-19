@@ -1,0 +1,11 @@
+#!/bin/sh
+# Auday Git guard v1
+set -eu
+repo_root=$(git rev-parse --show-toplevel)
+python3 "$repo_root/tools/git/check_staged.py" --all
+python3 "$repo_root/tools/verify_public.py" --history
+if ! git lfs version >/dev/null 2>&1; then
+    printf '%s\n' 'Git LFS is required before pushing this repository.' >&2
+    exit 1
+fi
+exec git lfs pre-push "$@"
