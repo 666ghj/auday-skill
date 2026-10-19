@@ -32,6 +32,8 @@ Use the directory supported by your host. The installer copies only the skill ru
 
 ## Connect
 
+Before connecting: use the same Wi-Fi on your iPhone and Mac, allow **Local Network** access when asked, and keep the phone's connection page open during transfer.
+
 1. On iPhone, open **Settings → Connect to your workflow**.
 2. Choose **All text** or **Text and audio**, then enable access. Both options are read-only.
 3. Ask your desktop agent to connect to Auday. Enter the phone's generated communication password in the local prompt, never in chat.
@@ -47,7 +49,7 @@ Example requests:
 ## Requirements
 
 - macOS 13 or later, Python 3.9 or later, and Xcode Command Line Tools with Swift 5.9 or later.
-- An Auday iPhone build with **Connect to your workflow** and a reachable local network. Apple peer-to-peer discovery is experimental and is not required for ordinary LAN use.
+- An Auday iPhone build with **Connect to your workflow**, with the iPhone and Mac connected to the same Wi-Fi.
 - Optional audio analysis: `ffmpeg`, `whisper-cli`, local model weights, and `uv` with Python 3.11–3.13 for speaker-analysis dependencies. Models are not bundled or downloaded automatically.
 
 Core connection and context retrieval do not require an AI API key, an Auday cloud account, or a cloud relay.

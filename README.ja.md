@@ -32,6 +32,8 @@ python3 tools/install.py --destination ~/.agents/skills/auday
 
 ## iPhone に接続する
 
+接続前に、iPhone と Mac を同じ Wi-Fi に接続してください。確認画面が出たら**ローカルネットワーク**へのアクセスを許可し、転送中は iPhone の接続ページを開いたままにしてください。
+
 1. iPhone で「設定 → Connect to your workflow」を開きます。
 2. 「すべてのテキスト」または「テキストと音声」を選び、接続を有効にします。どちらも読み取り専用です。
 3. デスクトップ Agent に Auday への接続を依頼します。iPhone が生成した通信用パスワードはローカルの入力画面に入力し、チャットには送信しないでください。
@@ -47,7 +49,7 @@ python3 tools/install.py --destination ~/.agents/skills/auday
 ## 動作要件
 
 - macOS 13 以降、Python 3.9 以降、および Swift 5.9 以降を含む Xcode Command Line Tools。
-- 「Connect to your workflow」に対応した Auday の iPhone 版と、相互に通信できるローカルネットワーク。Apple のピアツーピア検出は実験的な機能で、通常の LAN 接続には不要です。
+- 「Connect to your workflow」に対応した Auday の iPhone 版。iPhone と Mac は同じ Wi-Fi に接続してください。
 - 任意の音声分析機能：`ffmpeg`、`whisper-cli`、ローカルのモデル重み、および `uv` で管理する Python 3.11〜3.13 の話者分析用依存パッケージ。モデルは同梱せず、自動ダウンロードもしません。
 
 基本的な接続とコンテキストの取得に、AI API キー、Auday のクラウドアカウント、クラウド中継サーバーは必要ありません。

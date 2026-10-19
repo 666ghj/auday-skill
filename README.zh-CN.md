@@ -32,6 +32,8 @@ python3 tools/install.py --destination ~/.agents/skills/auday
 
 ## 连接手机
 
+连接前请确认：iPhone 和 Mac 连接同一个 Wi-Fi；系统询问时允许**本地网络**访问；传输时保持手机接入页打开。
+
 1. 在 iPhone 上打开「设置 → 接入你的工作流」。
 2. 选择「全部文字」或「文字与音频」，然后开启接入。两档权限都只能读取。
 3. 请桌面 Agent 连接 Auday，在本地输入窗口填写手机生成的通信密码，不要将密码发到聊天中。
@@ -47,7 +49,7 @@ python3 tools/install.py --destination ~/.agents/skills/auday
 ## 运行要求
 
 - macOS 13 或更新版本、Python 3.9 或更新版本，以及带有 Swift 5.9 或更新版本的 Xcode Command Line Tools。
-- 带有「接入你的工作流」功能的 Auday iPhone 版本，以及可互通的本地网络。Apple 点对点发现仍属实验能力，普通局域网连接不依赖它。
+- 带有「接入你的工作流」功能的 Auday iPhone 版本，iPhone 和 Mac 连接同一个 Wi-Fi。
 - 可选音频分析：`ffmpeg`、`whisper-cli`、本地模型权重，以及通过 `uv` 管理的 Python 3.11–3.13 说话人分析依赖。模型不随仓库提供，也不会自动下载。
 
 基本连接与上下文读取不需要 AI API Key、Auday 云端账号或云端中继。

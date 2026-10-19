@@ -1,5 +1,16 @@
 # Connection and local data
 
+## Connection prerequisites
+
+Give the user three short prerequisites: **connect both devices to the same Wi-Fi, allow Local Network access when asked, and keep the phone connection page open during transfer**. Use everyday language; do not lead with service names, network topology, or unusual connection arrangements. Explain extra troubleshooting only when a connection actually fails.
+
+- Use the same Wi-Fi for the normal setup. If discovery fails despite that, check whether the network blocks communication between devices, as can happen on guest or public Wi-Fi.
+- On iPhone, allow Auday's **Local Network** request. If it was denied, check **Settings → Privacy & Security → Local Network**. On macOS, allow the responsible desktop app or helper if prompted; the system may attribute a child tool's network access to its parent app. Do not claim permissions are granted merely because the listener started.
+- Keep the phone's connection page in the foreground with access enabled during live reads. The desktop agent starts the bundled connection program as needed; there is no separate service for the user to start. Bluetooth is not required for this route.
+- Proximity alone does not establish the default connection. Apple peer-to-peer Wi-Fi is an experimental, separately enabled path on both ends, not the normal phone-page behavior. Do not promise connection without shared LAN connectivity based on simulator results.
+
+Apple documents that the simulator does not implement local network privacy; verify the real permission prompt on a physical device. See [local network privacy](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy) and [the iPhone permission setting](https://support.apple.com/en-us/102229).
+
 ## Install and diagnose
 
 Resolve `<skill-root>` to the directory containing `SKILL.md`. Never assume another Auday checkout exists.
@@ -51,7 +62,7 @@ Search combines whitespace-separated terms with AND, supports substring matching
 | Result | Action |
 | --- | --- |
 | `not_paired` or missing Keychain secret | Start the local pairing prompt |
-| `awaiting_phone_or_wrong_password` | Check the active phone page, network, and matching password; do not retry without a bound |
+| `awaiting_phone_or_wrong_password` | Check the active phone page, reachable LAN, local-network permission, and matching password; do not retry without a bound |
 | `snapshot_changed` | The incomplete snapshot was not committed; sync the current snapshot once |
 | `source_device_changed` | Use a new profile; do not merge unrelated device archives |
 | Interrupted audio | Repeat the same audio request to resume |
