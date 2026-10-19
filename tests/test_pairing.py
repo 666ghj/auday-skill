@@ -9,6 +9,7 @@ from auday import bridge
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from make_fixture import make
+from native_peer import peer_binary
 
 
 @unittest.skipUnless(
@@ -25,7 +26,7 @@ class PairingTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(prefix="auday-pair-") as directory:
             make(Path(directory) / "source")
             server = subprocess.Popen(
-                [binary, "serve"],
+                [str(peer_binary())],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,

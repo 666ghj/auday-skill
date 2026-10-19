@@ -23,6 +23,9 @@ class InstallTests(unittest.TestCase):
             )
             self.assertFalse((destination / ".git").exists())
             self.assertFalse((destination / "tests").exists())
+            self.assertFalse(
+                (destination / "scripts/link/Sources/FixtureLibrary").exists()
+            )
             self.assertFalse((destination / "scripts/link/.build").exists())
             self.assertFalse((destination / "scripts/.venv").exists())
             process = subprocess.run(

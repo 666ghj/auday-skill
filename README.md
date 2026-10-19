@@ -1,8 +1,12 @@
 # Auday Skill
 
+[English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md)
+
 Bring what Auday knows into your workflow.
 
 Use your desktop AI assistant to find a conversation, connect ideas across your memories, prepare a project brief, or explore recordings with your Mac's compute. Phone data stays read-only, with sources attached to the information you use.
+
+This repository ships only the desktop skill. The Swift code is a macOS client bridge for Bonjour discovery, TLS connections, and Keychain access—not iPhone app code. The iPhone UI and data-export implementation stay in the Auday app repository.
 
 ## Current status
 
@@ -63,11 +67,12 @@ sh tools/git/install-hooks.sh
 python3 tools/verify_public.py
 python3 -m unittest discover -s tests -v
 swift test --package-path scripts/link
+swift test --package-path tests/native-peer
 ```
 
 On macOS, the test suite exercises actual encrypted loopback connections with synthetic data. Keychain interaction is opt-in: `AUDAY_TEST_KEYCHAIN=1 python3 -m unittest discover -s tests -p test_pairing.py -v`. No real recordings or model downloads are needed for the default suite.
 
-The phone-side app is maintained separately. This repository includes a protocol reference implementation and synthetic test fixtures, not the full iPhone app or its private data store.
+The phone-side app is maintained separately. Tests use a synthetic macOS loopback peer under `tests/native-peer`; it is excluded from skill installations. No iPhone target, mobile UI, or production phone data adapter is included.
 
 ## License
 

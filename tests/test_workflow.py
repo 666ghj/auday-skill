@@ -7,6 +7,7 @@ from auday import Auday, bridge, sha
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from make_fixture import make
+from native_peer import peer_binary
 
 
 @unittest.skipUnless(sys.platform == "darwin", "Native TLS bridge requires macOS")
@@ -14,6 +15,7 @@ class WorkflowTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.binary = bridge()
+        cls.peer = peer_binary()
         cls.temp = tempfile.TemporaryDirectory(prefix="auday-synthetic-")
         cls.root = Path(cls.temp.name)
         cls.library = make(cls.root / "source")
@@ -21,7 +23,7 @@ class WorkflowTests(unittest.TestCase):
             secrets.choice("23456789ABCDEFGHJKLMNPQRSTUVWXYZ") for _ in range(16)
         )
         cls.server = subprocess.Popen(
-            [str(cls.binary), "serve"],
+            [str(cls.peer)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -109,6 +111,15 @@ class WorkflowTests(unittest.TestCase):
                 self.request({"op": op, "id": "memory-1"})["error"],
                 "read_only_operation_not_supported",
             )
+
+    def test_desktop_client_has_no_server_command(self):
+        result = subprocess.run(
+            [str(self.binary), "serve"], capture_output=True, text=True, timeout=5
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(
+            json.loads(result.stdout)["error"], "unsupported_client_command"
+        )
 
     def test_all_pages_atomic_and_idempotent(self):
         first = self.app.sync()
@@ -248,7 +259,7 @@ class WorkflowTests(unittest.TestCase):
         downloaded = Path(self.app.audio("audio-demo")["path"])
         self.assertTrue(downloaded.exists())
         server = subprocess.Popen(
-            [str(self.binary), "serve"],
+            [str(self.peer)],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,

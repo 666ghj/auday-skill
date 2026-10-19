@@ -3,6 +3,7 @@
 This repository is prepared for public distribution, including every commit. Preserve the existing license and never commit personal recordings, transcripts, pairing secrets, local caches, machine-specific paths, or private development notes.
 
 - `SKILL.md`, `references/`, `agents/`, and `scripts/` are the installable skill. Keep references relative to the skill root. No other Auday checkout may be required at runtime.
+- Runtime native targets are macOS-only. Keep synthetic peers under `tests/`; never add iPhone UI, app targets, or production phone data adapters.
 - Phone data is read-only. Enforce `text-only-read-only` and `text-and-audio-read-only`; client parameters cannot expand the phone's scope.
 - Password input stays on the user's computer. Never request a password in chat or pass one in command arguments. macOS Keychain holds saved pairing secrets.
 - Retain provenance and source timestamps. Derived audio analysis never overwrites the original transcript or audio.

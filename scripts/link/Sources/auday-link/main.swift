@@ -15,7 +15,6 @@ func stdinObject() throws -> [String: Any] {
     return object
 }
 let service = "ai.auday.workflow-link.experimental"
-var retainedServer: LinkServer?
 func localPassword() throws -> String {
     // getpass has terminal/signal restoration; disallow its insecure no-TTY fallback.
     let descriptor = open("/dev/tty", O_RDWR | O_CLOEXEC)
@@ -59,20 +58,6 @@ do {
     case "generate":
         // Do not invoke from an AI chat: this command is for a user's terminal only.
         print(try CommunicationPassword.generate())
-    case "serve":
-        let input = try stdinObject()
-        guard let password = input["password"] as? String, let root = input["root"] as? String else { throw LinkError.message("missing_server_inputs") }
-        let scopeName = input["access"] as? String ?? AccessScope.textAndAudio.rawValue
-        guard let scope = AccessScope(rawValue: scopeName) else { throw LinkError.message("invalid_access_scope") }
-        let library = try Library(root: URL(fileURLWithPath: root), scope: scope); let server = LinkServer(); retainedServer = server
-        try server.start(library: library, password: password, port: input["port"] as? UInt16 ?? 0,
-            peerToPeer: input["peerToPeer"] as? Bool ?? false, advertise: input["advertise"] as? Bool ?? false) { result in
-            switch result {
-            case .success(let port): try? emit(["ready": true, "port": port, "snapshot": library.snapshot])
-            case .failure: try? emit(["ready": false, "error": "listener_failed"]); exit(1)
-            }
-        }
-        dispatchMain()
     case "request":
         let input = try stdinObject()
         let password: String
@@ -100,6 +85,7 @@ do {
         browser.start(queue: queue)
         queue.asyncAfter(deadline: .now() + 3) { browser.cancel(); try? emit(["services": services, "authenticated": false]); exit(0) }
         dispatchMain()
-    default: print("auday-link discover [--peer-to-peer] | pair --profile NAME --service NAME | request (JSON stdin) | serve (experiment JSON stdin)")
+    case nil, "--help", "help": print("auday-link discover [--peer-to-peer] | pair --profile NAME --service NAME | request (JSON stdin)")
+    default: throw LinkError.message("unsupported_client_command")
     }
 } catch { try? emit(["ok": false, "error": String(describing: error)]); exit(1) }

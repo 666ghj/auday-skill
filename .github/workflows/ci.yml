@@ -25,7 +25,9 @@ jobs:
       - name: Public source and history checks
         run: python3 tools/verify_public.py --history
       - name: Native protocol tests
-        run: swift test --package-path scripts/link
+        run: |
+          swift test --package-path scripts/link
+          swift test --package-path tests/native-peer
       - name: Python, installation, and encrypted transport tests
         run: python3 -m unittest discover -s tests -v
       - name: Whitespace check

@@ -1,6 +1,6 @@
 # Local connection protocol
 
-This document describes the current reference implementation. It does not certify a production iPhone build or physical wireless behavior.
+This document describes the protocol consumed by the macOS client. The desktop repository does not contain the iPhone app or its data adapter. A synthetic loopback peer under `tests/native-peer` exercises the contract; it is not installed with the skill and does not certify physical wireless behavior.
 
 ## Discovery and authentication
 
@@ -16,7 +16,7 @@ The local client stores secrets in macOS Keychain. It does not store them in the
 
 ## Framing and operations
 
-Each TLS connection carries one request and one response. A frame is a four-byte unsigned big-endian length followed by UTF-8 JSON. Maximum frame size is 2 MiB. A reference listener bounds concurrent clients and connection lifetime.
+Each TLS connection carries one request and one response. A frame is a four-byte unsigned big-endian length followed by UTF-8 JSON. Maximum frame size is 2 MiB. The synthetic test listener bounds concurrent clients and connection lifetime, and listens only on loopback.
 
 Successful replies include `ok`, `schemaVersion: 1`, `snapshot`, and `sourceDeviceID`. Client diagnostic output also includes the negotiated TLS version and cipher.
 
@@ -36,7 +36,7 @@ Audio chunks are at most 256 KiB. Unknown operations, including mutation request
 
 `text-and-audio-read-only` additionally exposes saved audio assets. Neither scope permits writing, deleting, controlling recording, or generating content on the phone. A request cannot increase scope.
 
-The reference publisher reads an immutable `library.json` projection. Snapshot identity hashes the projection and scope. A production adapter must produce stable IDs and a consistent saved-data snapshot; do not expose a mutable app database directly. The filesystem publisher is intended for fixtures and reference testing.
+The test peer reads an immutable synthetic `library.json` projection. Snapshot identity hashes the projection and scope. A production adapter must produce stable IDs and a consistent saved-data snapshot; do not expose a mutable app database directly. This fixture publisher is test-only; it is not a mobile implementation or a desktop runtime feature.
 
 The client commits complete snapshots transactionally. An unchanged identity avoids body downloads. An interrupted or inconsistent snapshot leaves the previous cache intact. This version does not implement a durable incremental event log. Scope reductions update subsequent syncs but cannot recall exported or offline copies.
 
@@ -44,7 +44,7 @@ The client commits complete snapshots transactionally. An unchanged identity avo
 
 Records use stable `id` values and one of `transcript`, `highlight`, `summary`, `reflection`, or `memory`. Preserve source IDs, original timestamps/time zones, saved/generated status, and revision information. Candidate memories remain candidates.
 
-Assets include `id`, `mime`, `size`, `sha256`, duration, and optional timeline spans. The reference publisher's `path` is local to its export root and never sent to the client. A timeline span maps `fileStart`/`fileEnd` seconds to a timezone-aware `recordedStart`; gaps must not be compressed into invented wall-clock continuity.
+Assets include `id`, `mime`, `size`, `sha256`, duration, and optional timeline spans. The test peer's `path` is local to its export root and never sent to the client. A timeline span maps `fileStart`/`fileEnd` seconds to a timezone-aware `recordedStart`; gaps must not be compressed into invented wall-clock continuity.
 
 Do not include API keys, Keychain items, internal configuration, or unrelated files in the projection. “All text” refers to authorized Auday business data, not the entire application container.
 

@@ -14,6 +14,7 @@ Before submitting:
 python3 tools/verify_public.py --history
 python3 -m unittest discover -s tests -v
 swift test --package-path scripts/link
+swift test --package-path tests/native-peer
 git diff --check
 ```
 
