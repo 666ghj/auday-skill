@@ -6,14 +6,6 @@
 
 让你常用的桌面 AI 助手查找讨论、关联记忆、整理项目简报，或借助 Mac 的算力深入分析录音。手机数据始终只读，使用的信息保留来源。
 
-本仓库只交付电脑端 Skill。Swift 代码是运行在 macOS 上的原生连接层，负责 Bonjour 发现、TLS 连接和 Keychain 访问，并不是 iPhone App 代码。手机界面与真实数据导出实现在 Auday App 仓库中维护。
-
-## 当前状态
-
-这是一个可安装的早期 macOS 客户端与 Agent Skill，需要配合带有「接入你的工作流」功能的 Auday iPhone 版本使用。仅安装本仓库中的 Skill，不会让手机自动具备数据访问能力；本项目也不承诺当前 App Store 版本已支持连接。
-
-客户端已有自动测试，覆盖真实的本地 TLS 连接、两档只读权限、完整快照同步、音频中断恢复、完整性校验和离线查询。实体 iPhone 的网络行为与 App 版本兼容性需要单独验证，详见[实机测试说明](docs/device-testing.md)。
-
 ## 通过桌面 Agent 安装
 
 打开支持本地 Skill 的桌面 Agent，发送：
@@ -47,7 +39,7 @@ python3 tools/install.py --destination ~/.agents/skills/auday
 ## 运行要求
 
 - macOS 13 或更新版本、Python 3.9 或更新版本，以及带有 Swift 5.9 或更新版本的 Xcode Command Line Tools。
-- 支持该连接协议的 Auday iPhone 版本，以及可互通的本地网络。Apple 点对点发现仍属实验能力，普通局域网连接不依赖它。
+- 带有「接入你的工作流」功能的 Auday iPhone 版本，以及可互通的本地网络。Apple 点对点发现仍属实验能力，普通局域网连接不依赖它。
 - 可选音频分析：`ffmpeg`、`whisper-cli`、本地模型权重，以及通过 `uv` 管理的 Python 3.11–3.13 说话人分析依赖。模型不随仓库提供，也不会自动下载。
 
 基本连接与上下文读取不需要 AI API Key、Auday 云端账号或云端中继。
@@ -70,9 +62,8 @@ swift test --package-path scripts/link
 swift test --package-path tests/native-peer
 ```
 
-macOS 测试使用合成数据建立真实的加密回环连接。Keychain 测试需显式开启：`AUDAY_TEST_KEYCHAIN=1 python3 -m unittest discover -s tests -p test_pairing.py -v`。默认测试不需要真实录音，也不下载模型。
+测试使用合成数据，覆盖加密连接、只读权限、快照一致性、下载续传与离线查询。手机连接验证见[实机测试说明](docs/device-testing.md)。Keychain 测试需显式开启：`AUDAY_TEST_KEYCHAIN=1 python3 -m unittest discover -s tests -p test_pairing.py -v`。默认测试不需要真实录音，也不下载模型。
 
-手机 App 在独立仓库中维护。测试目录 `tests/native-peer` 中的合成 macOS 回环服务只用于测试，不会安装到用户的 Skill 中。本仓库不包含 iPhone 构建目标、手机界面或正式手机数据适配器。
 
 ## 许可证
 

@@ -6,14 +6,6 @@ Bring what Auday knows into your workflow.
 
 Use your desktop AI assistant to find a conversation, connect ideas across your memories, prepare a project brief, or explore recordings with your Mac's compute. Phone data stays read-only, with sources attached to the information you use.
 
-This repository ships only the desktop skill. The Swift code is a macOS client bridge for Bonjour discovery, TLS connections, and Keychain access—not iPhone app code. The iPhone UI and data-export implementation stay in the Auday app repository.
-
-## Current status
-
-This is an early, installable macOS client and agent skill. It requires a compatible Auday iPhone build that exposes **Connect to your workflow**. The repository alone does not enable phone access, and this project does not claim that the currently distributed App Store build supports the connection.
-
-The client has automated coverage for real local TLS connections, read-only scopes, complete snapshots, interrupted audio downloads, integrity checks, and offline queries. Physical iPhone networking and app-version compatibility must be checked separately. See [device testing](docs/device-testing.md).
-
 ## Install through your desktop agent
 
 Open a desktop agent that supports local skills and send:
@@ -47,7 +39,7 @@ Example requests:
 ## Requirements
 
 - macOS 13 or later, Python 3.9 or later, and Xcode Command Line Tools with Swift 5.9 or later.
-- A compatible Auday iPhone build and a reachable local network. Apple peer-to-peer discovery is experimental and is not required for ordinary LAN use.
+- An Auday iPhone build with **Connect to your workflow** and a reachable local network. Apple peer-to-peer discovery is experimental and is not required for ordinary LAN use.
 - Optional audio analysis: `ffmpeg`, `whisper-cli`, local model weights, and `uv` with Python 3.11–3.13 for speaker-analysis dependencies. Models are not bundled or downloaded automatically.
 
 Core connection and context retrieval do not require an AI API key, an Auday cloud account, or a cloud relay.
@@ -70,9 +62,8 @@ swift test --package-path scripts/link
 swift test --package-path tests/native-peer
 ```
 
-On macOS, the test suite exercises actual encrypted loopback connections with synthetic data. Keychain interaction is opt-in: `AUDAY_TEST_KEYCHAIN=1 python3 -m unittest discover -s tests -p test_pairing.py -v`. No real recordings or model downloads are needed for the default suite.
+The test suite covers encrypted local connections, read-only scopes, snapshot consistency, resumable downloads, and offline queries using synthetic data. See [device testing](docs/device-testing.md) for phone connection checks. Keychain interaction is opt-in: `AUDAY_TEST_KEYCHAIN=1 python3 -m unittest discover -s tests -p test_pairing.py -v`. No real recordings or model downloads are needed for the default suite.
 
-The phone-side app is maintained separately. Tests use a synthetic macOS loopback peer under `tests/native-peer`; it is excluded from skill installations. No iPhone target, mobile UI, or production phone data adapter is included.
 
 ## License
 

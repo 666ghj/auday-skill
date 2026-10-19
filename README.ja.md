@@ -6,14 +6,6 @@ Auday が知っていることを、あなたのワークフローへ。
 
 いつものデスクトップ AI アシスタントで会話を探し、記憶どうしを結びつけ、プロジェクトの概要をまとめる。Mac の計算資源を使って録音を詳しく分析することもできます。iPhone のデータへのアクセスは常に読み取り専用で、利用する情報には出典が保持されます。
 
-このリポジトリで配布するのはデスクトップ用 Skill のみです。Swift コードは Bonjour による検出、TLS 接続、Keychain へのアクセスを担当する macOS クライアントであり、iPhone アプリのコードではありません。iPhone の画面と実データのエクスポート処理は Auday アプリのリポジトリで管理します。
-
-## 現在の状態
-
-本プロジェクトは、インストール可能な初期段階の macOS クライアントと Agent Skill です。「Connect to your workflow」に対応した Auday の iPhone 版が必要です。このリポジトリの Skill をインストールするだけでは、iPhone のデータにアクセスできません。現在 App Store で配布されているバージョンが接続に対応していることを保証するものでもありません。
-
-クライアントの自動テストでは、実際のローカル TLS 接続、読み取り専用のアクセス範囲、完全なスナップショット同期、音声ダウンロードの中断からの復旧、整合性検証、オフライン検索を確認しています。実機 iPhone のネットワーク動作とアプリのバージョン互換性は別途検証が必要です。[実機テスト手順](docs/device-testing.md)を参照してください。
-
 ## デスクトップ Agent からインストールする
 
 ローカルの Skill に対応したデスクトップ Agent を開き、次のように依頼してください。
@@ -47,7 +39,7 @@ python3 tools/install.py --destination ~/.agents/skills/auday
 ## 動作要件
 
 - macOS 13 以降、Python 3.9 以降、および Swift 5.9 以降を含む Xcode Command Line Tools。
-- 接続プロトコルに対応した Auday の iPhone 版と、相互に通信できるローカルネットワーク。Apple のピアツーピア検出は実験的な機能で、通常の LAN 接続には不要です。
+- 「Connect to your workflow」に対応した Auday の iPhone 版と、相互に通信できるローカルネットワーク。Apple のピアツーピア検出は実験的な機能で、通常の LAN 接続には不要です。
 - 任意の音声分析機能：`ffmpeg`、`whisper-cli`、ローカルのモデル重み、および `uv` で管理する Python 3.11〜3.13 の話者分析用依存パッケージ。モデルは同梱せず、自動ダウンロードもしません。
 
 基本的な接続とコンテキストの取得に、AI API キー、Auday のクラウドアカウント、クラウド中継サーバーは必要ありません。
@@ -70,9 +62,8 @@ swift test --package-path scripts/link
 swift test --package-path tests/native-peer
 ```
 
-macOS のテストでは合成データを使い、実際に暗号化されたループバック接続を検証します。Keychain を使うテストは明示的に有効化してください：`AUDAY_TEST_KEYCHAIN=1 python3 -m unittest discover -s tests -p test_pairing.py -v`。標準のテストに実際の録音やモデルのダウンロードは不要です。
+テストでは合成データを使い、暗号化接続、読み取り専用のアクセス範囲、スナップショットの整合性、ダウンロードの再開、オフライン検索を検証します。iPhone との接続確認には[実機テスト手順](docs/device-testing.md)を参照してください。Keychain を使うテストは明示的に有効化してください：`AUDAY_TEST_KEYCHAIN=1 python3 -m unittest discover -s tests -p test_pairing.py -v`。標準のテストに実際の録音やモデルのダウンロードは不要です。
 
-iPhone アプリは別のリポジトリで管理しています。`tests/native-peer` は合成データを使う macOS のループバックテスト用サーバーで、Skill のインストール対象には含まれません。iPhone のビルドターゲット、画面、実際のデータ取得処理は同梱していません。
 
 ## ライセンス
 
