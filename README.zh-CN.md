@@ -12,7 +12,7 @@
 
 > 请从 https://github.com/666ghj/auday-skill 为当前软件安装 Auday Skill，确认可用后，引导我连接手机上的 Auday。
 
-Agent 需要能够访问这个仓库。仓库处于私有状态时，请使用已有的 GitHub 登录授权，不要将访问令牌粘贴到对话中。不同软件的 Skill 安装目录与导入方式可能不同；克隆仓库成功不等于安装成功。
+不同软件的 Skill 安装目录与导入方式可能不同。请让 Agent 安装到当前软件支持的位置，并确认软件能够发现和使用它。
 
 Agent 可以使用所在软件的原生 Skill 安装工具。仓库也提供行为明确的本地安装器：
 
@@ -43,6 +43,8 @@ python3 tools/install.py --destination ~/.agents/skills/auday
 - 可选音频分析：`ffmpeg`、`whisper-cli`、本地模型权重，以及通过 `uv` 管理的 Python 3.11–3.13 说话人分析依赖。模型不随仓库提供，也不会自动下载。
 
 基本连接与上下文读取不需要 AI API Key、Auday 云端账号或云端中继。
+
+需要深入分析录音时，[Mac 音频选型指南](references/mac-audio-models.md)会指导 Agent 根据语言、任务和可用内存选择转录与说话人分析模型。
 
 ## 数据与隐私
 

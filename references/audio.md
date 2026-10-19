@@ -2,6 +2,8 @@
 
 Use Mac compute to explore recordings in more depth. Preserve the phone's existing work and create separate results.
 
+For engine selection, Mac memory tradeoffs, Chinese/English conversations, meeting speaker turns, and identity handling, read [Choosing local audio models on Mac](mac-audio-models.md). It covers Qwen3-ASR/MLX, Whisper, pyannote, VibeVoice and native Apple options. The commands below describe the bundled Whisper.cpp/sherpa-onnx runner; optional upstream engines need their own local environment.
+
 ## Capability boundaries
 
 - **Transcription:** the included runner supports local Whisper.cpp model files.

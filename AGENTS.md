@@ -1,6 +1,6 @@
 # Auday Skill
 
-This repository is prepared for public distribution, including every commit. Preserve the existing license and never commit personal recordings, transcripts, pairing secrets, local caches, machine-specific paths, or private development notes.
+This repository distributes the Auday desktop skill. Keep every commit suitable for redistribution. Preserve the existing license and never commit personal recordings, transcripts, pairing secrets, local caches, machine-specific paths, or private development notes.
 
 - `SKILL.md`, `references/`, `agents/`, and `scripts/` are the installable skill. Keep references relative to the skill root. No other Auday checkout may be required at runtime.
 - Runtime native targets are macOS-only. Keep synthetic peers under `tests/`; never add iPhone UI, app targets, or production phone data adapters.

@@ -26,6 +26,7 @@ The core client uses Python's standard library and compiles its bundled Swift br
 | Install, connect, sync, or recover a connection | Use local discovery and a local password prompt | [Connection](references/connection.md) |
 | Find a discussion, prepare a brief, reflect, extract follow-ups | Check freshness, search narrowly, expand sources | [Context workflows](references/context.md) |
 | Analyze recordings with Mac compute | Fetch selected audio and create independent local derivatives | [Audio analysis](references/audio.md) |
+| Choose transcription or speaker models for this Mac | Match language, task and available memory; check a representative sample | [Mac audio models](references/mac-audio-models.md) |
 
 ## Operating rules
 

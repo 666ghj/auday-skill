@@ -12,7 +12,7 @@ Open a desktop agent that supports local skills and send:
 
 > Install the Auday skill from https://github.com/666ghj/auday-skill for this application. Verify that the installation works, then guide me through connecting Auday on my iPhone.
 
-The repository must be accessible to the agent. While it is private, use your existing GitHub sign-in; do not paste access tokens into the conversation. Different hosts use different skill locations and import formats. A successful clone is not, by itself, a successful installation.
+Different hosts use different skill locations and import formats. Ask the agent to install the skill in the location supported by your application and verify that it can be discovered.
 
 The agent can use its native skill installer. A deterministic local installer is also included:
 
@@ -43,6 +43,8 @@ Example requests:
 - Optional audio analysis: `ffmpeg`, `whisper-cli`, local model weights, and `uv` with Python 3.11–3.13 for speaker-analysis dependencies. Models are not bundled or downloaded automatically.
 
 Core connection and context retrieval do not require an AI API key, an Auday cloud account, or a cloud relay.
+
+For deeper recording analysis, the [Mac audio guide](references/mac-audio-models.md) helps the agent choose transcription and speaker models for your language, task, and available memory.
 
 ## Data and privacy
 
