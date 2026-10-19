@@ -44,7 +44,7 @@ Example requests:
 
 Core connection and context retrieval do not require an AI API key, an Auday cloud account, or a cloud relay.
 
-For deeper recording analysis, the [Mac audio guide](references/mac-audio-models.md) helps the agent choose transcription and speaker models for your language, task, and available memory.
+For deeper recording analysis, the [language strategy guide](references/audio-language-routing.md) helps the agent choose among Japanese, Chinese and dialect-specific, English, Korean, French, German, and multilingual routes. The [Mac audio guide](references/mac-audio-models.md) covers speaker analysis and resource planning. The agent can adapt the tools to your recordings and reuse a setup that works well.
 
 ## Data and privacy
 

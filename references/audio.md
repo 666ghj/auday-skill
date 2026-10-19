@@ -2,7 +2,7 @@
 
 Use Mac compute to explore recordings in more depth. Preserve the phone's existing work and create separate results.
 
-For engine selection, Mac memory tradeoffs, Chinese/English conversations, meeting speaker turns, and identity handling, read [Choosing local audio models on Mac](mac-audio-models.md). It covers Qwen3-ASR/MLX, Whisper, pyannote, VibeVoice and native Apple options. The commands below describe the bundled Whisper.cpp/sherpa-onnx runner; optional upstream engines need their own local environment.
+Choose an engine using [language and dialect routing](audio-language-routing.md), which covers Japanese, Chinese, English, Korean, French, German and mixed-language recordings. For Mac resources, meeting speaker turns and identity handling, read [Choosing local audio models on Mac](mac-audio-models.md). The commands below describe the bundled Whisper.cpp/sherpa-onnx runner; optional upstream engines need their own local environment.
 
 ## Capability boundaries
 
@@ -23,7 +23,7 @@ uv sync --project <skill-root>/scripts --frozen
 
 Weights must already exist locally. The runner neither downloads models nor sends audio to a service. When obtaining new weights, use an approved source, pin a revision and hash, and honor the model's license and any required user acceptance. Do not silently download multiple large models.
 
-Whisper large-v3 and large-v3-turbo are candidates for different quality/resource tradeoffs, not guaranteed upgrades for every recording. Evaluate a representative sample in the user's language before processing a large archive. Synthetic smoke-test success is not evidence of real-world language or far-field accuracy.
+Select a model for the actual spoken language and task; a working language-specific model may be preferable to a general model. Whisper large-v3 and large-v3-turbo offer different quality/resource tradeoffs. Known single-language audio can use an explicit `--language` hint (`ja`, `zh`, `en`, `ko`, `fr`, `de`); use `auto` and inspect detection for uncertain or mixed audio. Preserve the original language unless translation is requested. Check a representative sample when choosing a new route; synthetic smoke-test success is not real-world quality evidence.
 
 ## Run
 

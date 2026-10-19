@@ -44,7 +44,7 @@ python3 tools/install.py --destination ~/.agents/skills/auday
 
 基本连接与上下文读取不需要 AI API Key、Auday 云端账号或云端中继。
 
-需要深入分析录音时，[Mac 音频选型指南](references/mac-audio-models.md)会指导 Agent 根据语言、任务和可用内存选择转录与说话人分析模型。
+需要深入分析录音时，[语言策略指南](references/audio-language-routing.md)会指导 Agent 按日语、中文及方言、英语、韩语、法语、德语和多语言混合等情况选择方案；[Mac 音频指南](references/mac-audio-models.md)补充说话人分析与资源安排。Agent 可以根据实际录音调整工具，也可以复用已经适合你的方案。
 
 ## 数据与隐私
 

@@ -4,13 +4,15 @@ Reviewed 2026-10-20. Use this guide when selecting an engine or planning deeper 
 
 ## Choose a route
 
+Start with [language and dialect routing](audio-language-routing.md) for Japanese, Chinese, English, Korean, French, German and mixed-language recordings. These are adaptable strategies; select for the actual speech and the user's quality/turnaround needs rather than assigning every user the same engine.
+
 The bundled `refine_audio.py` currently runs **Whisper.cpp**, with optional **sherpa-onnx** anonymous diarization. The other routes below use separately installed local tools; their model IDs are not arguments supported by that runner.
 
 | Need | Recommended starting point | Why and what to verify |
 | --- | --- | --- |
-| Use the existing Auday runner | Whisper.cpp with multilingual large-v3-turbo; compare large-v3 on difficult passages | Metal acceleration and quantized models fit Mac workflows. A larger model is a comparison candidate, not an automatic quality upgrade. Use the commands in [audio.md](audio.md). |
+| Use the existing Auday runner | A language-appropriate Whisper.cpp model, such as multilingual large-v3-turbo or a Japanese Kotoba GGML checkpoint | Metal acceleration and quantized models fit Mac workflows. Compare large-v3 where quality warrants it. Check each checkpoint's language coverage and installed-runtime compatibility; see [audio.md](audio.md). |
 | Chinese-first or Chinese/English conversations on Apple Silicon | Qwen3-ASR-1.7B via MLX Audio, starting with the 8-bit conversion | Qwen documents Chinese, English and dialect coverage; MLX Audio provides an Apple Silicon runtime. Evaluate names, English terms inside Chinese sentences, omissions and repetitions against the Whisper baseline. ASR language coverage alone does not prove code-switch accuracy. |
-| Less available memory or a quick first pass | Qwen3-ASR-0.6B via MLX, or a smaller multilingual Whisper model already installed | Reduce model size before increasing concurrency. Revisit uncertain spans with the stronger candidate selected by the sample check. |
+| Less available memory or a quick first pass | A smaller or quantized model within the selected language route | Examples include a smaller multilingual Whisper model, Qwen3-ASR-0.6B for a supported language, or Japanese-focused ReazonSpeech K2. Reduce model size before increasing concurrency. |
 | Meeting speaker turns | pyannote Community-1 as a separate local diarization stage | It provides ordinary overlapping turns plus an exclusive timeline useful for matching transcription. Keep both when overlap matters. Verify short interjections and speaker-count errors. |
 | Lightweight speaker turns using the bundled runner | sherpa-onnx segmentation + speaker embeddings + clustering | Already supported. Use actual local segmentation and embedding files; automatic clusters may merge or split voices. |
 | Reuse a native WhisperKit installation | WhisperKit for ASR, SpeakerKit for diarization | These are separate products in Argmax's open-source Swift package. Check the installed CLI and model versions; features from the separate Pro SDK are not implied by installing the open-source package. |
@@ -30,8 +32,8 @@ Inspect chip, architecture, installed models, free disk and current memory press
 These are conservative scheduling heuristics, not hardware support requirements:
 
 - **8 GB or already under memory pressure:** begin with a small model and one short asset; run ASR and diarization in separate processes.
-- **16 GB:** sample Qwen3-ASR-1.7B 8-bit or quantized Whisper turbo, sequentially; lower the model size if the measured run swaps heavily.
-- **24–32 GB:** compare the Chinese-oriented route and Whisper on the same sample, then run the chosen ASR, alignment and diarization stages sequentially.
+- **16 GB:** sample the selected language-appropriate model, sequentially; lower its size or precision if the measured run swaps heavily.
+- **24–32 GB:** there is more room to compare a relevant specialist and a working baseline when selection is needed, then run the chosen ASR, alignment and diarization stages sequentially. The machine's memory does not determine the recording's language.
 - **Larger-memory Macs:** add VibeVoice as a measured alternative when long context or joint speaker output helps. Do not infer that a full hour fits from parameter count or a model-card demonstration.
 - **Intel Macs:** retain a CPU-compatible Whisper.cpp route. MLX Apple Silicon guidance does not apply.
 
@@ -59,14 +61,14 @@ Check the installed CLI's help before running it. This is an upstream-runtime ex
 ## Build a useful meeting workflow
 
 1. **Keep the source mapping.** Retain the asset ID, audio hash, source metadata and original time spans. Use a temporary 16 kHz mono derivative when a model needs it. Do not discard independent microphone channels before deciding whether their channel separation is useful.
-2. **Check a representative sample.** About 3–5 minutes is a practical starting point; include technical terms, language switches, quiet speech, speaker changes and overlap. Compare the baseline with one relevant challenger, then select the better fit. Reuse existing approved local models where possible.
+2. **Check a representative sample when selecting or changing a route.** About 3–5 minutes is a practical starting point; include relevant language switches, terminology, quiet speech, speaker changes and overlap. Compare a working baseline with one relevant challenger when needed. Reuse an established satisfactory setup for routine work.
 3. **Transcribe in recoverable units.** Preserve each chunk's source offset, overlap and deduplication decisions. For recordings with long silence, consider VAD with edge padding; test that it retains quiet words and brief replies. Whisper.cpp supports a separate VAD model, but the bundled Auday runner does not currently expose that option. Use a separately configured engine workflow when VAD is needed.
 4. **Align when the task needs precise times.** Qwen3-ForcedAligner is a separate model. Its upstream contract supports inputs up to five minutes; chunk alignment accordingly. Text-generation deltas and coarse chunk extents are not word timestamps. Do not align a rewritten summary as if it were a literal transcript.
 5. **Assign anonymous speaker turns.** Keep a session-wide speaker space, or explicitly reconcile chunk-local embeddings before joining. Never concatenate `speaker_0` from unrelated chunks as the same person. Retain overlap and ambiguous attribution instead of forcing every sentence to one voice.
 6. **Review the passages that matter.** Recheck names, numbers, decisions, commitments and unintelligible spans against audio. A second ASR engine supplies another hypothesis, not truth. Keep raw output and corrections separate; an agent's fluent rewrite is not acoustic evidence.
 7. **Produce the requested result.** Deliver a source-linked transcript, meeting brief, decision history or follow-up list. Separate directly stated commitments from suggestions, and keep uncertainty visible at the affected passage.
 
-For the sample, record elapsed time, peak process memory, memory pressure, completion coverage and repeated/omitted passages. If human annotations exist, use Chinese CER, English WER, entity accuracy, speaker DER and timestamp error as appropriate. Do not call agreement with another machine transcript “accuracy,” or turn a synthetic smoke test into a real-meeting ranking.
+For the sample, record elapsed time, peak process memory, memory pressure, completion coverage and repeated/omitted passages. If human annotations exist, use language-appropriate CER/WER with documented normalization, entity accuracy, speaker DER and timestamp error as appropriate. Do not call agreement with another machine transcript “accuracy,” or turn a synthetic smoke test into a real-meeting ranking.
 
 ## Speaker labels and real identities
 

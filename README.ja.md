@@ -44,7 +44,7 @@ python3 tools/install.py --destination ~/.agents/skills/auday
 
 基本的な接続とコンテキストの取得に、AI API キー、Auday のクラウドアカウント、クラウド中継サーバーは必要ありません。
 
-録音を詳しく分析する場合は、[Mac 向け音声モデル選定ガイド](references/mac-audio-models.md)に沿って、言語、目的、利用可能なメモリに適した文字起こしと話者分析のモデルを Agent が選べます。
+録音を詳しく分析する場合は、[言語別の選定ガイド](references/audio-language-routing.md)に沿って、日本語、中国語と方言、英語、韓国語、フランス語、ドイツ語、複数言語が混在する会話などに適した方法を Agent が選べます。[Mac 向け音声ガイド](references/mac-audio-models.md)では、話者分析と計算資源の使い方も説明しています。録音に合わせてツールを調整し、すでに良好な結果が得られている構成はそのまま活用できます。
 
 ## データとプライバシー
 
