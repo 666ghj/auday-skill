@@ -1,8 +1,14 @@
-# Auday Skill
+<p align="center">
+  <img src="docs/assets/auday-banner.png" alt="Auday" width="100%">
+</p>
 
-[English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md)
+<h1 align="center">Auday Skill</h1>
 
-Bring what Auday knows into your workflow.
+<p align="center">Bring what Auday knows into your workflow.</p>
+
+<p align="center">
+  <strong>English</strong> &nbsp;·&nbsp; <a href="README.zh-CN.md">简体中文</a> &nbsp;·&nbsp; <a href="README.ja.md">日本語</a>
+</p>
 
 Use your desktop AI assistant to find a conversation, connect ideas across your memories, prepare a project brief, or explore recordings with your Mac's compute. Phone data stays read-only, with sources attached to the information you use.
 

@@ -1,8 +1,14 @@
-# Auday Skill
+<p align="center">
+  <img src="docs/assets/auday-banner.png" alt="Auday" width="100%">
+</p>
 
-[English](README.md) · [简体中文](README.zh-CN.md) · [日本語](README.ja.md)
+<h1 align="center">Auday Skill</h1>
 
-把 Auday 所知，接入你的工作流。
+<p align="center">把 Auday 所知，接入你的工作流。</p>
+
+<p align="center">
+  <a href="README.md">English</a> &nbsp;·&nbsp; <strong>简体中文</strong> &nbsp;·&nbsp; <a href="README.ja.md">日本語</a>
+</p>
 
 让你常用的桌面 AI 助手查找讨论、关联记忆、整理项目简报，或借助 Mac 的算力深入分析录音。手机数据始终只读，使用的信息保留来源。
 
