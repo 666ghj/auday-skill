@@ -1,0 +1,23 @@
+{
+  "provenance": "New synthetic records and queries for a small local integration smoke test. No personal content. This is not a general accuracy benchmark.",
+  "records": [
+    {"id":"demo","text":"Please bring a working prototype to the next design review. A slide presentation alone is not enough.","kind":"transcript","start":"2026-10-19T09:00:00+08:00"},
+    {"id":"privacy","text":"录音和转写在设备上处理，私人谈话不会发给远程服务器。","kind":"memory","start":"2026-10-19T10:00:00+08:00","state":"confirmed"},
+    {"id":"budget","text":"The annual software subscription costs twelve hundred dollars. Finance will review the invoice on Monday.","kind":"summary","start":"2026-10-19T11:00:00+08:00"},
+    {"id":"travel","text":"下周三乘高铁去上海参加客户会议，周四晚上返回。","kind":"transcript","start":"2026-10-19T12:00:00+08:00"},
+    {"id":"garden","text":"Water the tomatoes every morning and move the seedlings into sunlight.","kind":"transcript","start":"2026-10-19T13:00:00+08:00"},
+    {"id":"repair","text":"厨房水龙头漏水，维修人员明天下午过来更换密封圈。","kind":"transcript","start":"2026-10-19T14:00:00+08:00"},
+    {"id":"release","text":"The public release was postponed until Friday because the payment integration still fails its final test.","kind":"summary","start":"2026-10-19T15:00:00+08:00"},
+    {"id":"exercise","text":"医生建议每天步行半小时，并且减少连续坐着的时间。","kind":"transcript","start":"2026-10-19T16:00:00+08:00"}
+  ],
+  "queries":[
+    {"direction":"zh-to-en","text":"下次评审要带可以实际操作的样品，不能只有幻灯片","target":"demo"},
+    {"direction":"en-to-zh","text":"How do we keep confidential conversations off the cloud?","target":"privacy"},
+    {"direction":"mixed","text":"下次review要带working example，不能只做slides","target":"demo"},
+    {"direction":"zh-to-en","text":"为什么公开发布延期到了星期五？","target":"release"},
+    {"direction":"en-to-zh","text":"When will someone come to fix the leaking kitchen tap?","target":"repair"},
+    {"direction":"mixed","text":"software每年的费用是多少，谁来check invoice？","target":"budget"},
+    {"direction":"zh","text":"出差去上海和回来的日程是什么？","target":"travel"},
+    {"direction":"en","text":"What should I do to help the tomato plants grow?","target":"garden"}
+  ]
+}
