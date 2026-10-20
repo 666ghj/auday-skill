@@ -53,6 +53,10 @@ If the user already asked to configure semantic search, proceed under that reque
 
 The setup downloads the pinned compatible runtime and complete model, verifies SHA-256 hashes, saves the local configuration, and runs a small synthetic verification. Only successful verification means the semantic capability is ready. It can be prepared before pairing; the user's actual archive is indexed after the first successful sync.
 
+The selected installation is remembered before downloads begin. If it is
+interrupted, `setup` reports `resume_semantic_setup`; continue the requested
+preparation instead of asking the same installation question again.
+
 If the user chooses later or declines:
 
 ```text

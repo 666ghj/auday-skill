@@ -102,7 +102,7 @@ class FirstRunTests(unittest.TestCase):
             visited.append(config)
             during = first_run.setup_status(self.root)
             self.assertFalse(during["semantic"]["verifiedBySetup"])
-            self.assertEqual(during["semantic"]["choice"], "deferred")
+            self.assertEqual(during["semantic"]["choice"], "requested")
             self.assertEqual(self.library.read_bytes(), self.before_library)
             return {"checksPassed": 3, "syntheticDataOnly": True}
 
@@ -125,7 +125,6 @@ class FirstRunTests(unittest.TestCase):
 
     def test_failed_smoke_removes_new_configuration_and_preserves_library(self):
         first_run.defer_semantic(self.root)
-        state = (self.profile / "setup-state.json").read_bytes()
         with patch.object(first_run, "require_macos"), \
                 patch.object(first_run, "install_runtime", return_value=self.server), \
                 patch.object(first_run, "download_asset", return_value=self.model), \
@@ -134,10 +133,23 @@ class FirstRunTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "synthetic smoke failure"):
                 first_run.setup_semantic(self.root)
         self.assertFalse((self.profile / "semantic-config.json").exists())
-        self.assertEqual((self.profile / "setup-state.json").read_bytes(), state)
+        self.assertEqual(first_run.setup_status(self.root)["semantic"]["choice"], "requested")
+        self.assertFalse(first_run.setup_status(self.root)["recommendSemantic"])
+        self.assertEqual(first_run.setup_status(self.root)["nextStep"], "resume_semantic_setup")
         self.assertEqual(self.library.read_bytes(), self.before_library)
         self.assertFalse(first_run.setup_status(self.root)["semantic"]["verifiedBySetup"])
         self.assertEqual(list(self.profile.glob(".setup-*")), [])
+
+    def test_download_failure_remembers_request_without_reasking(self):
+        with patch.object(first_run, "require_macos"), \
+                patch.object(first_run, "install_runtime", side_effect=ValueError("network unavailable")):
+            with self.assertRaisesRegex(ValueError, "network unavailable"):
+                first_run.setup_semantic(self.root)
+        status = first_run.setup_status(self.root)
+        self.assertFalse(status["recommendSemantic"])
+        self.assertEqual(status["nextStep"], "resume_semantic_setup")
+        first_run.defer_semantic(self.root)
+        self.assertEqual(first_run.setup_status(self.root)["nextStep"], "continue_the_users_task")
 
     def test_failed_smoke_restores_previous_verified_configuration_exactly(self):
         config, state = self.create_verified_previous_setup()

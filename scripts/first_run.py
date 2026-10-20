@@ -82,6 +82,8 @@ def setup_status(root, profile="default"):
     if (Path(__file__).parent / "audio_setup.py").is_file():
         from audio_setup import audio_status
         audio = audio_status(root)
+    offer = supported and not present and semantic["choice"] == "not_selected"
+    resume = supported and not integrity and semantic["choice"] in ("requested", "enabled")
     return {
         "ok": True, "core": {
             "pythonReady": True,
@@ -91,9 +93,9 @@ def setup_status(root, profile="default"):
         "semantic": semantic, "audio": audio,
         "paired": (selected / "connection.json").is_file(),
         "libraryOnDisk": (selected / "library.sqlite").is_file(),
-        "recommendSemantic": supported and not present and semantic["choice"] != "deferred",
-        "nextStep": "offer_semantic_now_or_later" if supported and not present and semantic["choice"] != "deferred"
-                    else "continue_the_users_task",
+        "recommendSemantic": offer,
+        "nextStep": "offer_semantic_now_or_later" if offer else
+                    "resume_semantic_setup" if resume else "continue_the_users_task",
     }
 
 
@@ -139,6 +141,11 @@ def setup_semantic(root, profile="default"):
     root = Path(root).expanduser().resolve()
     selected = _profile(root, profile)
     selected.mkdir(parents=True, exist_ok=True, mode=0o700)
+    state_path = selected / "setup-state.json"
+    state = _load(state_path)
+    if state.get("semanticChoice") != "enabled":
+        state["semanticChoice"] = "requested"
+        _save(state_path, state)
     report("Preparing local semantic search", force=True)
     server = install_runtime(root, "llama")
     model = download_asset(
