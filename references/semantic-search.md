@@ -103,6 +103,10 @@ offsets, and similarity score. Similarity is a ranking signal, not a confidence
 estimate, factual verification, or identity attribution. For an exact quotation,
 read the source record and preserve its original wording.
 
+Semantic queries return up to 100 records and do not support `--offset` pagination.
+Narrow the query, date, or kind when more focused coverage is needed; keyword
+pagination is a separate retrieval workflow.
+
 The inference process lives only for the current operation. It uses an authenticated
 Unix socket inside a private temporary directory, with no TCP listener. Model
 requests and private text are not logged. Stage/count progress goes to stderr;

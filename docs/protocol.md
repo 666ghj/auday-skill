@@ -30,6 +30,7 @@ Successful replies include `ok`, `schemaVersion: 1`, `snapshot`, and `sourceDevi
 | `assets` | `offset`, `snapshot` | Up to 100 asset descriptors and `nextOffset`; no server paths |
 | `read` | `id`, optional `snapshot`, optional `allowRecordChunks: true` | One inline record or record-transfer descriptor |
 | `recordChunk` | `id`, `offset`, `length`, `snapshot` | Base64 bytes of one complete JSON record, with size and hashes |
+| `prepareAudio` | `id`, `snapshot` | Prepare one permitted on-demand asset and return its size, hash, format, and timeline |
 | `audio` | `id`, `offset`, `length`, `snapshot` | Base64 chunk, offset, total size, full hash, and chunk hash |
 
 Audio chunks are at most 256 KiB. Unknown operations, including mutation requests, are rejected. Errors use `ok: false` and a bounded error identifier. The server accepts asset IDs, never arbitrary filesystem paths.
@@ -66,7 +67,7 @@ When present, `snapshotCapturedAt` and `snapshotCurrent` describe the phone's so
 
 ## Scopes and snapshots
 
-`text-only-read-only` exposes transcripts, Highlights, summaries, reflections, and memories. It returns an empty audio catalogue, omits direct audio asset references from the text projection, and rejects the audio operation.
+`text-only-read-only` exposes transcripts, Highlights, summaries, reflections, and memories. It returns an empty audio catalogue, omits direct audio asset references from the text projection, and rejects both `prepareAudio` and `audio`.
 
 `text-and-audio-read-only` additionally exposes saved audio assets. Neither scope permits writing, deleting, controlling recording, or generating content on the phone. A request cannot increase scope.
 
@@ -78,7 +79,7 @@ The client commits complete snapshots transactionally. An unchanged identity avo
 
 Records use stable `id` values and one of `transcript`, `highlight`, `summary`, `reflection`, or `memory`. Preserve source IDs, original timestamps/time zones, saved/generated status, and revision information. Candidate memories remain candidates.
 
-Assets include `id`, `mime`, `size`, `sha256`, duration, and optional timeline spans. The test peer's `path` is local to its export root and never sent to the client. A timeline span maps `fileStart`/`fileEnd` seconds to a timezone-aware `recordedStart`; gaps must not be compressed into invented wall-clock continuity.
+An on-demand catalogue entry contains its `id`, `preparation: "on-demand"`, and `contentRevision`, with available source timing metadata. Prepared or eager assets include `mime`, `size`, `sha256`, duration, and timeline spans when available. Catalogue metadata does not mean the file has been prepared or downloaded. The test peer's `path` is local to its export root and never sent to the client. A timeline span maps `fileStart`/`fileEnd` seconds to a timezone-aware `recordedStart`; gaps must not be compressed into invented wall-clock continuity.
 
 Do not include API keys, Keychain items, internal configuration, or unrelated files in the projection. “All text” refers to authorized Auday business data, not the entire application container.
 
