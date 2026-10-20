@@ -6,7 +6,7 @@ Reviewed 2026-10-20. Use this guide when selecting an engine or planning deeper 
 
 Start with [language and dialect routing](audio-language-routing.md) for Japanese, Chinese, English, Korean, French, German and mixed-language recordings. These are adaptable strategies; select for the actual speech and the user's quality/turnaround needs rather than assigning every user the same engine.
 
-The bundled `refine_audio.py` currently runs **Whisper.cpp**, with optional **sherpa-onnx** anonymous diarization. The other routes below use separately installed local tools; their model IDs are not arguments supported by that runner.
+The bundled `refine_audio.py` currently runs **Whisper.cpp**, with **sherpa-onnx** anonymous diarization enabled by default. Honor an explicit request to omit speaker labels with `--no-diarize`. Apply the same preference when selecting another route. The other routes below use separately installed local tools; their model IDs are not arguments supported by that runner.
 
 | Need | Recommended starting point | Why and what to verify |
 | --- | --- | --- |
@@ -64,7 +64,7 @@ Check the installed CLI's help before running it. This is an upstream-runtime ex
 2. **Check a representative sample when selecting or changing a route.** About 3–5 minutes is a practical starting point; include relevant language switches, terminology, quiet speech, speaker changes and overlap. Compare a working baseline with one relevant challenger when needed. Reuse an established satisfactory setup for routine work.
 3. **Transcribe in recoverable units.** Preserve each chunk's source offset, overlap and deduplication decisions. For recordings with long silence, consider VAD with edge padding; test that it retains quiet words and brief replies. Whisper.cpp supports a separate VAD model, but the bundled Auday runner does not currently expose that option. Use a separately configured engine workflow when VAD is needed.
 4. **Align when the task needs precise times.** Qwen3-ForcedAligner is a separate model. Its upstream contract supports inputs up to five minutes; chunk alignment accordingly. Text-generation deltas and coarse chunk extents are not word timestamps. Do not align a rewritten summary as if it were a literal transcript.
-5. **Assign anonymous speaker turns.** Keep a session-wide speaker space, or explicitly reconcile chunk-local embeddings before joining. Never concatenate `speaker_0` from unrelated chunks as the same person. Retain overlap and ambiguous attribution instead of forcing every sentence to one voice.
+5. **Assign anonymous speaker turns unless the user opted out.** Keep a session-wide speaker space, or explicitly reconcile chunk-local embeddings before joining. Never concatenate `speaker_0` from unrelated chunks as the same person. Retain overlap and ambiguous attribution instead of forcing every sentence to one voice.
 6. **Review the passages that matter.** Recheck names, numbers, decisions, commitments and unintelligible spans against audio. A second ASR engine supplies another hypothesis, not truth. Keep raw output and corrections separate; an agent's fluent rewrite is not acoustic evidence.
 7. **Produce the requested result.** Deliver a source-linked transcript, meeting brief, decision history or follow-up list. Separate directly stated commitments from suggestions, and keep uncertainty visible at the affected passage.
 

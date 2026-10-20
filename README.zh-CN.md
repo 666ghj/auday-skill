@@ -56,6 +56,8 @@ python3 tools/install.py --destination ~/.agents/skills/auday
 
 需要深入分析录音时，[语言策略指南](references/audio-language-routing.md)会指导 Agent 按日语、中文及方言、英语、韩语、法语、德语和多语言混合等情况选择方案；[Mac 音频指南](references/mac-audio-models.md)补充说话人分析与资源安排。Agent 可以根据实际录音调整工具，也可以复用已经适合你的方案。
 
+新转写默认区分匿名说话人。直接说“不要说话人识别”即可关闭，内置脚本使用 `--no-diarize` 执行该模式。匿名说话人标签不代表真实身份识别。
+
 ## 数据与隐私
 
 原生连接程序使用系统生成的 16 位通信密码、HKDF-SHA256，以及 TLS 1.2 ECDHE-PSK 与 ChaCha20-Poly1305。它不接受任意短口令，不跳过证书验证，也不会回退到明文传输。具体边界与现有限制见[协议文档](docs/protocol.md)。

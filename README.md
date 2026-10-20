@@ -56,6 +56,8 @@ Core connection and context retrieval do not require an AI API key, an Auday clo
 
 For deeper recording analysis, the [language strategy guide](references/audio-language-routing.md) helps the agent choose among Japanese, Chinese and dialect-specific, English, Korean, French, German, and multilingual routes. The [Mac audio guide](references/mac-audio-models.md) covers speaker analysis and resource planning. The agent can adapt the tools to your recordings and reuse a setup that works well.
 
+New transcriptions include anonymous speaker labels by default. Say “do not distinguish speakers” to turn them off; the bundled runner uses `--no-diarize` for this mode. Speaker labels do not identify real people.
+
 ## Data and privacy
 
 The native bridge uses a generated 16-character communication secret, HKDF-SHA256, and TLS 1.2 ECDHE-PSK with ChaCha20-Poly1305. It does not accept arbitrary short human passwords, disable certificate checks, or fall back to plaintext. See the [protocol](docs/protocol.md) for the exact boundary and current limitations.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Offline Whisper.cpp transcription with optional sherpa-onnx anonymous diarization.
+"""Offline Whisper.cpp transcription with anonymous diarization enabled by default.
 Weights must already exist locally. Results are derivatives; no phone write-back.
 """
 
@@ -74,8 +74,18 @@ def run(args):
     out = args.output.expanduser().resolve()
     if not audio.is_file() or not model.is_file():
         raise ValueError("audio_and_local_model_required; no automatic downloads")
-    if args.diarize and (not args.segmentation_model or not args.embedding_model):
-        raise ValueError("diarization_requires_two_local_models")
+    if args.diarize:
+        if not args.segmentation_model or not args.embedding_model:
+            raise ValueError(
+                "diarization_enabled_by_default: provide --segmentation-model and "
+                "--embedding-model; use --no-diarize when speaker labels are unwanted"
+            )
+        segmentation = args.segmentation_model.expanduser().resolve()
+        embedding = args.embedding_model.expanduser().resolve()
+        if not segmentation.is_file() or not embedding.is_file():
+            raise ValueError("local_diarization_weights_missing")
+        import sherpa_onnx
+        import soundfile as sf
     if args.speakers is not None and args.speakers < 1:
         raise ValueError("speaker_count_must_be_positive")
     if not 1 <= args.threads <= 32:
@@ -163,13 +173,6 @@ def run(args):
     turns = []
     diarization = {"status": "not_requested"}
     if args.diarize:
-        import sherpa_onnx
-        import soundfile as sf
-
-        segmentation = args.segmentation_model.expanduser().resolve()
-        embedding = args.embedding_model.expanduser().resolve()
-        if not segmentation.is_file() or not embedding.is_file():
-            raise ValueError("local_diarization_weights_missing")
         config = sherpa_onnx.OfflineSpeakerDiarizationConfig(
             segmentation=sherpa_onnx.OfflineSpeakerSegmentationModelConfig(
                 pyannote=sherpa_onnx.OfflineSpeakerSegmentationPyannoteModelConfig(
@@ -255,7 +258,8 @@ def run(args):
     ]
     for row in segments:
         stamp = f"{int(row['start'] // 60):02d}:{row['start'] % 60:05.2f}"
-        lines.append(f"- [{stamp}] {row['speaker']}：{row['text']}")
+        speaker = f"{row['speaker']}：" if args.diarize else ""
+        lines.append(f"- [{stamp}] {speaker}{row['text']}")
     (out / "transcript.md").write_text("\n".join(lines) + "\n")
     print(
         json.dumps(
@@ -279,7 +283,12 @@ def main():
     p.add_argument("--language", default="auto")
     p.add_argument("--threads", type=int, default=4)
     p.add_argument("--asset-metadata", type=Path)
-    p.add_argument("--diarize", action="store_true")
+    p.add_argument(
+        "--diarize",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Include anonymous speaker labels by default; use --no-diarize for transcription only",
+    )
     p.add_argument("--segmentation-model", type=Path)
     p.add_argument("--embedding-model", type=Path)
     p.add_argument("--speakers", type=int)

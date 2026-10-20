@@ -7,7 +7,7 @@ Choose an engine using [language and dialect routing](audio-language-routing.md)
 ## Capability boundaries
 
 - **Transcription:** the included runner supports local Whisper.cpp model files.
-- **Speaker diarization:** optional sherpa-onnx segmentation, embeddings, and clustering produce anonymous labels within one asset.
+- **Speaker diarization:** enabled by default; sherpa-onnx segmentation, embeddings, and clustering produce anonymous labels within one asset. An explicit request such as “不要说话人识别” or “do not distinguish speakers” disables this stage with `--no-diarize`.
 - **Identity:** map labels to names only using user-confirmed evidence. The same label in two files is not necessarily the same person. Do not overwrite existing confirmed phone-side attribution.
 - **Source separation:** diarization does not separate overlapping voices into individual audio tracks. No source-separation model is included.
 
@@ -15,7 +15,7 @@ Choose an engine using [language and dialect routing](audio-language-routing.md)
 
 Fetch the selected asset with `auday.py audio <asset-id>` and retain its `.asset.json`. If the phone permits text only, do not bypass that scope. Stored audio may contain enhancements, missing intervals, or omitted silence; analysis cannot recover sound that no longer exists.
 
-Use `doctor` to check `ffmpeg`, `whisper-cli`, and `uv`. The base transcription runner uses Python's standard library. Diarization dependencies are installed locally with:
+Use `doctor` to check `ffmpeg`, `whisper-cli`, and `uv`. Transcription without speaker labels uses Python's standard library. The default diarization workflow also requires dependencies installed locally with:
 
 ```text
 uv sync --project <skill-root>/scripts --frozen
@@ -27,23 +27,25 @@ Select a model for the actual spoken language and task; a working language-speci
 
 ## Run
 
-Transcription:
-
-```text
-python3 <skill-root>/scripts/refine_audio.py \
-  --audio <local-audio> --model <local-ggml-model> \
-  --output <new-private-output-directory> --language auto
-```
-
-With anonymous diarization:
+Default transcription with anonymous diarization:
 
 ```text
 uv run --project <skill-root>/scripts --frozen python <skill-root>/scripts/refine_audio.py \
   --audio <local-audio> --model <local-ggml-model> \
-  --output <new-private-output-directory> --language auto --diarize \
+  --output <new-private-output-directory> --language auto \
   --segmentation-model <local-pyannote-onnx> \
   --embedding-model <local-campplus-onnx>
 ```
+
+If the user explicitly declines speaker labels:
+
+```text
+python3 <skill-root>/scripts/refine_audio.py \
+  --audio <local-audio> --model <local-ggml-model> \
+  --output <new-private-output-directory> --language auto --no-diarize
+```
+
+The opt-out does not require diarization weights or Python packages. If the default route lacks these prerequisites, explain and resolve the selected setup within the task's authorization; do not silently switch to transcription only. The default separates anonymous voices, not real-world identities.
 
 Pass `--speakers N` only when the user knows the count and wants to supply it. Automatic clustering can split or merge speakers. Never provide a hidden true count to make an evaluation look better.
 
