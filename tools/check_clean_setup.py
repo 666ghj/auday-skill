@@ -21,6 +21,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True, help="New directory outside the repository")
     parser.add_argument("--audio", choices=["skip", "full"], default="full")
+    parser.add_argument("--audio-model", choices=["small", "turbo"], default="small")
     args = parser.parse_args()
     output = args.output.expanduser().absolute()
     if output.exists() or output.is_symlink() or output.is_relative_to(ROOT):
@@ -118,7 +119,7 @@ def main():
     )
     audio_result = None
     if args.audio == "full":
-        opted_out = run("setup", "--audio", "--model", "small", "--no-diarize")
+        opted_out = run("setup", "--audio", "--model", args.audio_model, "--no-diarize")
         assert opted_out["installed"] and not opted_out["diarizationReady"]
         audio_config = json.loads((data / "runtime/audio/config.json").read_text())
         subprocess.run([
@@ -129,7 +130,7 @@ def main():
         assets = json.loads((package / "scripts/audio-assets.json").read_text())
         assert all(not (data / "models/audio" / asset["filename"]).exists()
                    for asset in assets["diarization"].values())
-        audio_result = run("setup", "--audio", "--model", "small")
+        audio_result = run("setup", "--audio", "--model", args.audio_model)
         assert audio_result["installed"] and audio_result["diarizationReady"]
         audio_config = json.loads((data / "runtime/audio/config.json").read_text())
         for field in ("python", "ffmpeg", "whisperCLI", "model", "segmentationModel", "embeddingModel"):
@@ -146,7 +147,7 @@ def main():
         "baseDownloadsWithoutOptionalModels": True, "deferChoicePersisted": True,
         "semanticSetupChecks": 3, "semanticRetrievalChecks": 3,
         "nativeBridgeBuiltFromInstalledPackage": True,
-        "audio": "small with opt-out then default diarization" if audio_result else "not_run",
+        "audio": args.audio_model + " with opt-out then default diarization" if audio_result else "not_run",
         "personalDataRead": False, "phoneConnectionTested": False,
         "systemBaseline": "macOS system utilities and Apple developer tools; no claim of an untouched OS",
         "elapsedSeconds": round(time.monotonic() - started, 3),

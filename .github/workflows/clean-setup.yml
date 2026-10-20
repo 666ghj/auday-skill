@@ -21,8 +21,10 @@ jobs:
         include:
           - os: macos-15
             arch: arm64
+            audio: turbo
           - os: macos-15-intel
             arch: x86_64
+            audio: small
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     steps:
@@ -37,7 +39,9 @@ jobs:
       - name: Validate from an installed package and empty runtime directories
         # This Python launches the harness; the installed skill then bootstraps
         # its own interpreter with global tools poisoned on the child PATH.
-        run: python3 tools/check_clean_setup.py --output "$RUNNER_TEMP/auday-clean-acceptance"
+        env:
+          AUDIO_MODEL: ${{ matrix.audio }}
+        run: python3 tools/check_clean_setup.py --output "$RUNNER_TEMP/auday-clean-acceptance" --audio-model "$AUDIO_MODEL"
       - name: Report clean-install evidence
         if: always()
         run: |
