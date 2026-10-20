@@ -51,7 +51,7 @@ public final class Library {
         for row in records {
             guard let kind = row["kind"] as? String,
                   ["transcript", "highlight", "summary", "reflection", "memory"].contains(kind),
-                  (try JSONSerialization.data(withJSONObject: row)).count < FrameConnection.maximum / 2 else {
+                  (try JSONSerialization.data(withJSONObject: row)).count < FrameConnection.maximum - 4096 else {
                 throw LinkError.message("invalid_record")
             }
         }
@@ -153,7 +153,12 @@ public final class LinkServer {
                             let response: [String: Any]
                             do { response = try library.respond(request) }
                             catch { response = ["ok": false, "error": String(describing: error)] }
-                            framed.send(response) { _ in connection.cancel(); self.clients.removeValue(forKey: id) }
+                            framed.send(response, final: true) { error in
+                                if error != nil { connection.cancel(); self.clients.removeValue(forKey: id); return }
+                                connection.receive(minimumIncompleteLength: 1, maximumLength: 1) { _, _, _, _ in
+                                    connection.cancel(); self.clients.removeValue(forKey: id)
+                                }
+                            }
                         } catch { connection.cancel(); self.clients.removeValue(forKey: id) }
                     }
                 } else if case .failed = state { connection.cancel(); self.clients.removeValue(forKey: id) }

@@ -18,6 +18,8 @@ The local client stores secrets in macOS Keychain. It does not store them in the
 
 Each TLS connection carries one request and one response. A frame is a four-byte unsigned big-endian length followed by UTF-8 JSON. Maximum frame size is 2 MiB. The synthetic test listener bounds concurrent clients and connection lifetime, and listens only on loopback.
 
+The receiver accumulates stream fragments until the declared frame length is complete; a receive callback is not assumed to correspond to a whole frame. The sender marks its response as the final message and drains the connection until the peer closes or the bounded drain timeout expires. `contentProcessed` is not treated as proof of remote delivery. Skill 0.3.1 includes this stream-handling correction; native TLS regression tests include a complete 1.5 MB inline response.
+
 Successful replies include `ok`, `schemaVersion: 1`, `snapshot`, and `sourceDeviceID`. For an on-demand companion, control-plane status uses `null` for the snapshot and counts until preparation succeeds; this never means an empty archive. Client diagnostic output also includes the negotiated TLS version and cipher.
 
 | `op` | Request fields | Result |

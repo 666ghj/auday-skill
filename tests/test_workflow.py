@@ -19,6 +19,12 @@ class WorkflowTests(unittest.TestCase):
         cls.temp = tempfile.TemporaryDirectory(prefix="auday-synthetic-")
         cls.root = Path(cls.temp.name)
         cls.library = make(cls.root / "source")
+        # Exercise a real TLS response larger than 1 MiB, not only tiny
+        # metadata pages or mocked chunk replies.
+        cls.library["records"][214]["payload"] = {"syntheticPadding": "x" * 1500000}
+        (cls.root / "source" / "library.json").write_text(
+            json.dumps(cls.library, ensure_ascii=False, indent=2)
+        )
         cls.password = "".join(
             secrets.choice("23456789ABCDEFGHJKLMNPQRSTUVWXYZ") for _ in range(16)
         )
@@ -81,6 +87,11 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(
             status["transport"], {"tlsVersion": "0x0303", "cipherSuite": "0xccac"}
         )
+
+    def test_large_inline_record_arrives_complete_over_tls(self):
+        response = self.request({"op": "read", "id": "transcript-214"})
+        self.assertTrue(response["ok"])
+        self.assertEqual(response["record"]["payload"]["syntheticPadding"], "x" * 1500000)
 
     def test_wrong_password_releases_no_metadata(self):
         password = "".join(

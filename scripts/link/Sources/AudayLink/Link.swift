@@ -64,6 +64,9 @@ public func linkParameters(password: String, peerToPeer: Bool) throws -> NWParam
 }
 
 public final class FrameConnection {
+    private final class Buffer: @unchecked Sendable {
+        var bytes = Data()
+    }
     public static let maximum = 2 * 1024 * 1024
     public let connection: NWConnection
     public init(_ connection: NWConnection) { self.connection = connection }
@@ -79,19 +82,26 @@ public final class FrameConnection {
         }
     }
     private func exact(_ count: Int, _ completion: @escaping (Result<Data, Error>) -> Void) {
-        connection.receive(minimumIncompleteLength: count, maximumLength: count) { data, _, complete, error in
+        read(count, into: Buffer(), completion)
+    }
+    private func read(_ count: Int, into buffer: Buffer, _ completion: @escaping (Result<Data, Error>) -> Void) {
+        connection.receive(minimumIncompleteLength: 1, maximumLength: min(64 * 1024, count - buffer.bytes.count)) { data, _, complete, error in
+            if let data { buffer.bytes.append(data) }
             if let error { completion(.failure(error)) }
-            else if let data, data.count == count { completion(.success(data)) }
-            else { completion(.failure(LinkError.message(complete ? "connection_closed" : "truncated_frame"))) }
+            else if buffer.bytes.count == count { completion(.success(buffer.bytes)) }
+            else if complete || data?.isEmpty != false {
+                completion(.failure(LinkError.message(complete ? "connection_closed" : "truncated_frame")))
+            } else { self.read(count, into: buffer, completion) }
         }
     }
-    public func send(_ value: Any, completion: @escaping (Error?) -> Void) {
+    public func send(_ value: Any, final: Bool = false, completion: @escaping (Error?) -> Void) {
         do {
             let data = try JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
             guard !data.isEmpty, data.count <= Self.maximum else { throw LinkError.message("response_too_large") }
             var size = UInt32(data.count).bigEndian
             var frame = withUnsafeBytes(of: &size) { Data($0) }; frame.append(data)
-            connection.send(content: frame, completion: .contentProcessed(completion))
+            connection.send(content: frame, contentContext: final ? .finalMessage : .defaultMessage,
+                            isComplete: true, completion: .contentProcessed(completion))
         } catch { completion(error) }
     }
 }
