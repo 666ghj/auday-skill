@@ -425,10 +425,20 @@ class Auday:
         if self.metadata().get("capabilities", {}).get("onDemandAudio") is not True:
             raise ValueError("on_demand_audio_not_supported")
         snapshot = self.metadata()["snapshot"]
-        reply = self.request(
-            {"op": "prepareAudio", "id": asset["id"], "snapshot": snapshot},
-            timeout=90,
-        )
+        request = {"op": "prepareAudio", "id": asset["id"], "snapshot": snapshot}
+        try:
+            reply = self.request(request, timeout=90)
+        except ValueError as error:
+            if str(error) != "snapshot_not_ready":
+                raise
+            # Access may have been reopened since the cache was synchronized.
+            # Prepare once, then require the same source version before reading.
+            status = self.prepared_status()
+            if status.get("access") != "text-and-audio-read-only":
+                raise ValueError("audio_access_denied") from None
+            if status.get("snapshot") != snapshot:
+                raise ValueError("snapshot_changed") from None
+            reply = self.request(request, timeout=90)
         ready = reply.get("asset")
         if (
             reply.get("snapshot") != snapshot

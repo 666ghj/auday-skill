@@ -184,6 +184,44 @@ class OnDemandAudioContractTests(unittest.TestCase):
         self.assertFalse(self.app.sync()["sourceSnapshotCurrent"])
         self.assertEqual(self.calls.count("list"), 1)
 
+    def reopened_transport(self, change_snapshot=False):
+        state = {"ready": False, "preparations": 0}
+        def request(payload):
+            op = payload["op"]
+            if op == "prepareAudio" and not state["ready"]:
+                return {"ok": False, "error": "snapshot_not_ready"}
+            if op == "prepareSnapshot":
+                state["preparations"] += 1
+                state["ready"] = True
+                if change_snapshot:
+                    self.snapshot = "b" * 64
+                op = "status"
+            if op == "status":
+                reply = self.request({"op": "status"})
+                reply["capabilities"]["onDemandSnapshot"] = True
+                reply["snapshotState"] = "ready" if state["ready"] else "idle"
+                return reply
+            return self.request(payload)
+        self.app.transport = request
+        return state
+
+    def test_audio_after_reopening_access_prepares_once(self):
+        self.app.sync()
+        state = self.reopened_transport()
+        result = self.app.audio("sample")
+        self.assertEqual(Path(result["path"]).read_bytes(), self.body)
+        self.assertEqual(state["preparations"], 1)
+        self.offline = True
+        self.assertTrue(self.app.audio("sample")["cacheHit"])
+
+    def test_audio_after_reopening_requires_the_cached_snapshot_version(self):
+        self.app.sync()
+        state = self.reopened_transport(change_snapshot=True)
+        with self.assertRaisesRegex(ValueError, "snapshot_changed"):
+            self.app.audio("sample")
+        self.assertEqual(state["preparations"], 1)
+        self.assertNotIn("audio", self.calls)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
