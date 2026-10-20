@@ -10,7 +10,7 @@
   <a href="README.md">English</a> &nbsp;·&nbsp; <strong>简体中文</strong> &nbsp;·&nbsp; <a href="README.ja.md">日本語</a>
 </p>
 
-**Auday 是一款面向 Apple Watch 和 iPhone 的全天录音与 AI 记忆应用。** 用 Apple Watch 记录对话和灵感，在 iPhone 上查看转写、Highlights、摘要、每日反思和记忆，重新找到那些值得回顾的时刻。
+**Auday 把你的 Apple Watch 变成全天候 AI 录音助手。** 它结合录音、心率等身体信号、实时压力估计，以及位置和活动信息，在 iPhone 上串联一天的经历。通过 Highlights、每日反思和可回溯原文的 AI 对话，帮助你回顾重要时刻、发现关联，逐渐积累属于自己的记忆。
 
 <p align="center">
   <a href="https://apps.apple.com/app/id6814210373">
