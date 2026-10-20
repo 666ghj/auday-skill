@@ -113,7 +113,7 @@ class FirstRunTests(unittest.TestCase):
                 patch.object(first_run, "_verify_semantic", side_effect=smoke):
             result = first_run.setup_semantic(self.root)
         self.assertEqual(len(visited), 1)
-        required.assert_called_once_with("13.3")
+        required.assert_any_call("13.3")
         self.assertTrue(result["semanticReady"])
         self.assertFalse(result["phoneConnectedBySetup"])
         status = first_run.setup_status(self.root)

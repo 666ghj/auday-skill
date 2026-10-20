@@ -25,13 +25,17 @@ The core client requires macOS 13 or later. The pinned semantic runtime requires
 
 The bootstrap can prepare a private `uv` executable and managed Python without relying on a globally installed Python or Homebrew. Explain the approximately 40 MB base download when needed; extracted files use more disk space. `doctor` checks the environment, and `setup` reads the saved onboarding state and capability suggestions.
 
-Phone discovery and encrypted connection use a bundled Swift bridge that must be compiled. The integrated audio setup also needs Apple's compiler to build Whisper.cpp. If Xcode Command Line Tools are missing, the agent can start the macOS installer:
+Phone discovery and encrypted connection use a bundled Swift bridge that requires Swift 5.9 or later. The integrated audio setup also needs Apple's compiler to build Whisper.cpp. If Xcode Command Line Tools are missing, the agent can start the macOS installer:
 
 ```text
 xcode-select --install
 ```
 
 Explain the system dialog and wait only for steps the user must perform, such as entering a system password or accepting a system license. Recheck afterward. Do not describe this as a fully unattended fresh-Mac install, and do not treat a toolchain issue as a reason to download audio models. Local capabilities that do not need the bridge can be prepared separately.
+
+If the available Swift is too old, update the compatible Apple tools; an older
+macOS installation may need a system update to obtain them. Do not treat the
+presence of `/usr/bin/swift` alone as a ready compiler.
 
 ## Recommend semantic search once
 
@@ -81,7 +85,12 @@ For a new environment, the integrated Whisper.cpp route supplies two executable 
 | `small` — Whisper small Q5_1 | 190.09 MB | Limited memory, an Intel Mac, or a lightweight first pass |
 | `turbo` — Whisper large-v3-turbo Q5_0 | 574.04 MB | A capable Mac and a task that warrants the larger multilingual model |
 
-These are model downloads, not complete installed size or peak memory. The runtime, audio conversion tools, and any required dependencies are additional. Inspect the setup plan and explain the selected downloads before starting; a request to prepare transcription already authorizes the necessary setup. Do not install both models by default.
+These are model downloads, not complete installed size or peak memory. The runtime, audio conversion tools, and any required dependencies are additional. Read the download sizes and model choices returned by `setup`, then explain the selected downloads before starting; a request to prepare transcription already authorizes the necessary setup. Do not install both models by default.
+
+Allow room for extracted runtimes, build products, and resumable download caches.
+As a practical starting allowance, keep at least 1 GB free for semantic setup,
+2 GB for the small audio route, or 3 GB for turbo; these are planning allowances,
+not measured peak memory or exact final disk sizes.
 
 Anonymous speaker diarization is included by default, with approximately 30 MB of speaker model files plus its runtime dependencies. If the user says “do not distinguish speakers,” pass `--no-diarize` during both setup and transcription so speaker weights and packages are not required or downloaded for that route.
 
@@ -99,7 +108,7 @@ For the explicit speaker opt-out:
   --output <new-private-output-directory> --language auto --no-diarize
 ```
 
-Setup downloads and verifies the selected assets, configures their paths, and verifies the pipeline with synthetic input. `transcribe` reuses that setup; it does not download missing models itself. Fix a missing prerequisite through setup instead of silently changing the task or dropping speaker labels.
+Setup downloads and verifies the selected assets, configures their paths, and verifies the pipeline with a public sample recording. `transcribe` reuses that setup; it does not download missing models itself. Fix a missing prerequisite through setup instead of silently changing the task or dropping speaker labels.
 
 Use [Language strategies](audio-language-routing.md) when a specialist is justified by the recording. Those other engines require their own installation and verification; their appearance in a guide does not mean `setup --audio` can install them. Obtain only the selected route. Hand off required upstream account, license, or secret entry to the user's local interface; never ask for credentials in chat.
 

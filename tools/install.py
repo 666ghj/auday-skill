@@ -21,7 +21,7 @@ EXCLUDED = {
     ".private",
     ".private-work",
 }
-SUFFIXES = {".py", ".swift", ".toml", ".lock", ".md", ".yaml", ".yml", ".json", ".sh"}
+SUFFIXES = {".py", ".swift", ".toml", ".lock", ".md", ".yaml", ".yml", ".json", ".sh", ".tsv"}
 
 
 def package_files(root=ROOT):

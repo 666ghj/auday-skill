@@ -1,0 +1,5 @@
+component	architecture	url	sha256	size	install_dir	archive_root	executable	min_macos
+uv	arm64	https://github.com/astral-sh/uv/releases/download/0.13.3/uv-aarch64-apple-darwin.tar.gz	bf1e4fb6f5f5079a2902ad3f3a9e2d337575b226a1378f2449d8404353650608	14309841	uv-0.13.3-arm64	uv-aarch64-apple-darwin	uv	13.0
+uv	x86_64	https://github.com/astral-sh/uv/releases/download/0.13.3/uv-x86_64-apple-darwin.tar.gz	5c35634957db7ebd9c2e4cc6c66b8979fb2c26a6b0dbd1d214d6acbac4033a89	17182824	uv-0.13.3-x86_64	uv-x86_64-apple-darwin	uv	13.0
+llama	arm64	https://github.com/ggml-org/llama.cpp/releases/download/b10865/llama-b10865-bin-macos-arm64.tar.gz	027683efa8e45b56111a2595b525e6517bf58bd6d27d6c1685ab557bfd064b12	11141558	llama-b10865-arm64	llama-b10865	llama-server	13.3
+llama	x86_64	https://github.com/ggml-org/llama.cpp/releases/download/b10865/llama-b10865-bin-macos-x64.tar.gz	81cc14afcb6b005fd09cf3c50f79e4a5e93e100cb284aed6b89b5cc3dbe4335d	11196792	llama-b10865-x86_64	llama-b10865	llama-server	13.3

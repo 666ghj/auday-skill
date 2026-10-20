@@ -1,0 +1,46 @@
+name: Clean first-run setup
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'codex/first-run-*'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: clean-first-run-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  clean-macos:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            arch: arm64
+          - os: macos-15-intel
+            arch: x86_64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+      - name: Confirm runner architecture
+        env:
+          EXPECTED_ARCH: ${{ matrix.arch }}
+        run: test "$(uname -m)" = "$EXPECTED_ARCH"
+      - name: Validate from an installed package and empty runtime directories
+        # This Python launches the harness; the installed skill then bootstraps
+        # its own interpreter with global tools poisoned on the child PATH.
+        run: python3 tools/check_clean_setup.py --output "$RUNNER_TEMP/auday-clean-acceptance"
+      - name: Report clean-install evidence
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/auday-clean-acceptance/report.json" ]; then
+            cat "$RUNNER_TEMP/auday-clean-acceptance/report.json"
+          fi

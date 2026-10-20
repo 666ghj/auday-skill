@@ -306,6 +306,19 @@ class RuntimeSetupTests(unittest.TestCase):
         self.assertFalse(json.loads(result.stdout)["downloadsStarted"])
         self.assertFalse(data_root.exists())
 
+    def test_swift_stub_or_old_compiler_is_not_connection_ready(self):
+        results = [
+            subprocess.CompletedProcess([], 0, stdout="selected-tools"),
+            subprocess.CompletedProcess([], 0, stdout="swift-executable"),
+            subprocess.CompletedProcess([], 0, stdout="Apple Swift version 5.8.1"),
+        ]
+        with patch.object(runtime.sys, "platform", "darwin"), \
+                patch.object(runtime.subprocess, "run", side_effect=results), \
+                patch.object(Path, "is_file", return_value=True):
+            status = runtime.command_line_tools_status()
+        self.assertFalse(status["ready"])
+        self.assertEqual(status["reason"], "swift_5_9_or_later_required")
+
 
 if __name__ == "__main__":
     unittest.main()

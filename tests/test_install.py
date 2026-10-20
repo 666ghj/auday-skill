@@ -29,7 +29,8 @@ class InstallTests(unittest.TestCase):
             self.assertFalse((destination / "scripts/link/.build").exists())
             self.assertFalse((destination / "scripts/.venv").exists())
             process = subprocess.run(
-                [sys.executable, str(destination / "scripts/auday.py"), "doctor"],
+                [sys.executable, str(destination / "scripts/auday.py"),
+                 "--home", str(Path(folder) / "empty-data"), "doctor"],
                 cwd=folder,
                 capture_output=True,
                 text=True,
@@ -38,6 +39,9 @@ class InstallTests(unittest.TestCase):
             doctor = json.loads(process.stdout)
             self.assertEqual(doctor["version"], result["version"])
             self.assertEqual(doctor["phoneSupport"], "compatible-build-required")
+            self.assertFalse(doctor["capabilities"]["semantic"]["configured"])
+            self.assertFalse(doctor["capabilities"]["audio"]["installed"])
+            self.assertFalse(doctor["capabilities"]["paired"])
             self.assertTrue((destination / "install-receipt.json").is_file())
 
     def test_existing_destination_is_preserved(self):

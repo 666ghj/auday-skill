@@ -663,9 +663,25 @@ def main():
     semantic_setup.add_argument("--server", type=Path, required=True)
     commands.add_parser("index", help="Build or update the local semantic index")
     commands.add_parser("index-status", help="Check semantic index coverage and freshness")
+    setup = commands.add_parser("setup", help="Inspect or prepare first-use capabilities")
+    capability = setup.add_mutually_exclusive_group()
+    capability.add_argument("--semantic", action="store_true")
+    capability.add_argument("--defer-semantic", action="store_true")
+    capability.add_argument("--audio", action="store_true")
+    setup.add_argument("--model", choices=["small", "turbo"])
+    setup.add_argument("--diarize", action=argparse.BooleanOptionalAction, default=True)
+    transcribe = commands.add_parser("transcribe", help="Transcribe with the prepared private audio runtime")
+    transcribe.add_argument("--audio", type=Path, required=True)
+    transcribe.add_argument("--output", type=Path, required=True)
+    transcribe.add_argument("--language", default="auto")
+    transcribe.add_argument("--diarize", action=argparse.BooleanOptionalAction, default=True)
+    transcribe.add_argument("--threads", type=int, default=4)
+    transcribe.add_argument("--speakers", type=int)
+    transcribe.add_argument("--asset-metadata", type=Path)
     args = parser.parse_args()
     os.umask(0o077)
     if args.command == "doctor":
+        from first_run import setup_status
         dump(
             {
                 "platform": sys.platform,
@@ -677,8 +693,32 @@ def main():
                 "companionProtocol": "auday-workflow-link-v2",
                 "phoneSupport": "compatible-build-required",
                 "liveConnectionSupported": sys.platform == "darwin",
+                "capabilities": setup_status(args.home, args.profile),
             }
         )
+        return
+    if args.command == "setup":
+        import first_run
+        if args.semantic:
+            result = first_run.setup_semantic(args.home, args.profile)
+        elif args.defer_semantic:
+            result = first_run.defer_semantic(args.home, args.profile)
+        elif args.audio:
+            from audio_setup import setup_audio
+            result = setup_audio(
+                args.home, model=args.model or first_run.recommended_audio_model(), diarize=args.diarize,
+            )
+        else:
+            result = first_run.setup_status(args.home, args.profile)
+            result["recommendedAudioModel"] = first_run.recommended_audio_model()
+        dump(result)
+        return
+    if args.command == "transcribe":
+        from audio_setup import transcribe as transcribe_local
+        dump(transcribe_local(
+            args.home, args.audio, args.output, language=args.language, diarize=args.diarize,
+            threads=args.threads, speakers=args.speakers, asset_metadata=args.asset_metadata,
+        ))
         return
     if args.command == "discover":
         subprocess.run(
@@ -787,6 +827,6 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (ValueError, KeyError, OSError, sqlite3.Error, subprocess.SubprocessError) as error:
+    except (ValueError, KeyError, OSError, RuntimeError, sqlite3.Error, subprocess.SubprocessError) as error:
         dump({"ok": False, "error": str(error)})
         sys.exit(1)
