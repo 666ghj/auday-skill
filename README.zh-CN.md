@@ -46,11 +46,16 @@ python3 tools/install.py --destination ~/.agents/skills/auday
 - 「回顾今天的记忆，把明确承诺和可能的后续事项分开。」
 - 「借助 Mac 分析这段录音，保留它与原始时间线的对应关系。」
 
+Agent 可以用关键词查找原词，也可以用[本地语义检索](references/semantic-search.md)查找概念和不同表述。语义检索需要配置本地 Embedding 模型并建立持久索引，不会把文字发送给外部 Embedding API。同步、建索引和音频分析时会展示当前阶段及实际处理数量。
+
+同步资料保存在硬盘上的 SQLite 数据库中，重启 Mac 后仍然存在。也可以让 Agent [导出可读文件](references/context.md#readable-files)，得到总目录和按日期整理的 Markdown，用文本编辑器直接浏览或全文查找。
+
 ## 运行要求
 
 - macOS 13 或更新版本、Python 3.9 或更新版本，以及带有 Swift 5.9 或更新版本的 Xcode Command Line Tools。
 - 带有「接入你的工作流」功能的 Auday iPhone 版本，iPhone 和 Mac 连接同一个 Wi-Fi。
 - 可选音频分析：`ffmpeg`、`whisper-cli`、本地模型权重，以及通过 `uv` 管理的 Python 3.11–3.13 说话人分析依赖。模型不随仓库提供，也不会自动下载。
+- 语义检索：指南中指定的完整 EmbeddingGemma 模型及兼容的本地 llama.cpp 运行程序；客户端与向量存储使用 Python 标准库。
 
 基本连接与上下文读取不需要 AI API Key、Auday 云端账号或云端中继。
 

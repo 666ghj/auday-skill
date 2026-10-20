@@ -151,7 +151,7 @@ def export_library(database, destination, language="en", progress=None):
             destination.rmdir()
             raise
         if progress:
-            progress("Exporting readable text", completed=total, total=total, unit="records", force=True)
+            progress("Readable export complete", completed=total, total=total, unit="records", force=True)
         return {
             "ok": True, "path": str(destination), "index": str(destination / "index.md"),
             "recordCount": total, "dayCount": len(counts),

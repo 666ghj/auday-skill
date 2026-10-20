@@ -154,7 +154,7 @@ class Auday:
                         "syncedAt": now(), "capabilities": capabilities, **source_freshness
                     }.items()],
                 )
-            report("Snapshot unchanged; local library is current")
+            report("Snapshot unchanged; reusing cached records")
             return {
                 **self.metadata(),
                 "changedRecords": 0,
@@ -377,6 +377,7 @@ class Auday:
             raise ValueError("limit_must_be_1_to_100")
         if not 0 <= offset <= 1000000:
             raise ValueError("invalid_offset")
+        report("Searching cached text", force=True)
         clauses = []
         values = []
         for token in query.split():
@@ -400,6 +401,7 @@ class Auday:
         rows = [
             json.loads(r[0]) for r in self.db.execute(sql, values + [limit + 1, offset])
         ]
+        report("Keyword search complete")
         return {
             "syncedAt": self.metadata().get("syncedAt"),
             "freshness": "last_synced_snapshot",
@@ -645,6 +647,7 @@ def main():
     search.add_argument("--date")
     search.add_argument("--limit", type=int, default=20)
     search.add_argument("--offset", type=int, default=0)
+    search.add_argument("--mode", choices=["keyword", "semantic"], default="keyword")
     assets = commands.add_parser("assets")
     assets.add_argument("--limit", type=int, default=20)
     assets.add_argument("--offset", type=int, default=0)
@@ -655,6 +658,11 @@ def main():
     export = commands.add_parser("export", help="Export cached text as readable daily Markdown files")
     export.add_argument("--output", type=Path, required=True)
     export.add_argument("--language", choices=["en", "zh-CN"], default="en")
+    semantic_setup = commands.add_parser("configure-semantic", help="Configure an existing local embedding model")
+    semantic_setup.add_argument("--model", type=Path, required=True)
+    semantic_setup.add_argument("--server", type=Path, required=True)
+    commands.add_parser("index", help="Build or update the local semantic index")
+    commands.add_parser("index-status", help="Check semantic index coverage and freshness")
     args = parser.parse_args()
     os.umask(0o077)
     if args.command == "doctor":
@@ -684,7 +692,26 @@ def main():
             raise ValueError("invalid_profile_name")
         from library_export import export_library
         database = args.home.expanduser().resolve() / args.profile / "library.sqlite"
-        dump(export_library(database, args.output, args.language))
+        dump(export_library(database, args.output, args.language, progress=report))
+        return
+    if args.command in ("configure-semantic", "index", "index-status") or (
+        args.command == "search" and args.mode == "semantic"
+    ):
+        if not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", args.profile):
+            raise ValueError("invalid_profile_name")
+        import semantic_search
+        root = args.home.expanduser().resolve() / args.profile
+        if args.command == "configure-semantic":
+            result = semantic_search.configure(root, args.model, args.server)
+        elif args.command == "index":
+            result = semantic_search.build_index(root)
+        elif args.command == "index-status":
+            result = semantic_search.status(root)
+        else:
+            if args.offset:
+                raise ValueError("semantic_offset_not_supported: narrow the query, date or kind")
+            result = semantic_search.search(root, args.query, args.kind, args.date, args.limit)
+        dump(result)
         return
     app = Auday(args.home, args.profile)
     try:
@@ -760,6 +787,6 @@ def main():
 if __name__ == "__main__":
     try:
         main()
-    except (ValueError, KeyError, OSError, subprocess.SubprocessError) as error:
+    except (ValueError, KeyError, OSError, sqlite3.Error, subprocess.SubprocessError) as error:
         dump({"ok": False, "error": str(error)})
         sys.exit(1)

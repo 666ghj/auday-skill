@@ -51,7 +51,7 @@ python3 <skill-root>/scripts/auday.py audio <asset-id>
 
 `--home` and `--profile` are global options placed before the command. Use separate profiles for separate phones. Passwords are never command arguments.
 
-Search combines whitespace-separated terms with AND, supports substring matching, and is not semantic cross-language retrieval. Results carry `syncedAt`; use `nextOffset` with `--offset` to continue. `--date` matches a record's preserved ISO date, not a reconstructed date in the Mac's current time zone. Some derived records lack `start`, so browse by kind or follow their sources.
+The default keyword search combines whitespace-separated terms with AND and supports substring matching. It is distinct from the [local semantic mode](semantic-search.md), selected with `search --mode semantic` after preparing the local model and index. Keyword results carry `syncedAt`; use `nextOffset` with `--offset` to continue. `--date` matches a record's preserved ISO date, not a reconstructed date in the Mac's current time zone. Some derived records lack `start`, so browse by kind or follow their sources.
 
 `sync` checks the snapshot identity first. An unchanged snapshot transfers no record bodies. A changed snapshot is paginated, validated, and committed atomically; this is not a persistent change-log protocol. Scope is part of snapshot identity. Text-only mode returns no audio catalogue and rejects audio requests.
 

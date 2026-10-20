@@ -46,11 +46,16 @@ python3 tools/install.py --destination ~/.agents/skills/auday
 - 「今日の記憶を振り返り、明確に約束したことと、今後の対応候補を分けて。」
 - 「この録音を Mac で分析して。元の時間軸との対応関係は保持して。」
 
+Agent はキーワード検索に加え、概念や言い換えを探す[ローカル意味検索](references/semantic-search.md)を利用できます。意味検索にはローカルの埋め込みモデルと永続インデックスを設定し、外部の埋め込み API にテキストを送信しません。同期、索引作成、音声分析では、処理段階と実際の処理件数を表示します。
+
+同期した資料はディスク上の SQLite データベースに保存され、Mac を再起動しても残ります。[読みやすいファイルへの書き出し](references/context.md#readable-files)を依頼すると、目次と日付ごとの Markdown が作成され、テキストエディターで閲覧や全文検索ができます。
+
 ## 動作要件
 
 - macOS 13 以降、Python 3.9 以降、および Swift 5.9 以降を含む Xcode Command Line Tools。
 - 「Connect to your workflow」に対応した Auday の iPhone 版。iPhone と Mac は同じ Wi-Fi に接続してください。
 - 任意の音声分析機能：`ffmpeg`、`whisper-cli`、ローカルのモデル重み、および `uv` で管理する Python 3.11〜3.13 の話者分析用依存パッケージ。モデルは同梱せず、自動ダウンロードもしません。
+- 意味検索：ガイドで指定した完全な EmbeddingGemma モデルと対応するローカル llama.cpp 実行環境。クライアントとベクトル保存には Python 標準ライブラリを使用します。
 
 基本的な接続とコンテキストの取得に、AI API キー、Auday のクラウドアカウント、クラウド中継サーバーは必要ありません。
 

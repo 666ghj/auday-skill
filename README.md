@@ -46,11 +46,16 @@ Example requests:
 - “Review today's memories and separate commitments from possible follow-ups.”
 - “Use my Mac to analyze this recording, preserving its original timeline.”
 
+The agent can use exact keyword search or [local semantic search](references/semantic-search.md) for concepts and paraphrases. Semantic retrieval needs a configured local embedding model and a persistent index; it does not send text to an embedding API. The agent shows processing stages and measured counts during synchronization, indexing and audio analysis.
+
+Your synchronized library is a SQLite file on disk, retained after restarting the Mac. Ask the agent to [export readable files](references/context.md#readable-files) for an index and daily Markdown documents you can browse or search in a text editor.
+
 ## Requirements
 
 - macOS 13 or later, Python 3.9 or later, and Xcode Command Line Tools with Swift 5.9 or later.
 - An Auday iPhone build with **Connect to your workflow**, with the iPhone and Mac connected to the same Wi-Fi.
 - Optional audio analysis: `ffmpeg`, `whisper-cli`, local model weights, and `uv` with Python 3.11–3.13 for speaker-analysis dependencies. Models are not bundled or downloaded automatically.
+- Semantic retrieval: the pinned complete EmbeddingGemma model and compatible local llama.cpp runtime described in the semantic guide. The client and vector store use Python's standard library.
 
 Core connection and context retrieval do not require an AI API key, an Auday cloud account, or a cloud relay.
 
