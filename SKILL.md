@@ -43,6 +43,25 @@ The core client uses Python's standard library and compiles its bundled Swift br
 - Include anonymous speaker diarization by default when creating a new transcript. If the user says not to identify or distinguish speakers, omit that stage and use `--no-diarize` with the bundled runner. Missing models or dependencies are setup requirements, not a reason to silently disable speaker labels.
 - New analyses, transcripts, and reports are derivatives on the computer. Never overwrite phone records, the source audio, or previous analysis runs. Anonymous speaker labels do not identify real people or establish identity across files.
 
+## Show the workflow
+
+Explain the selected approach in the user's language before starting: what data
+will be read, whether an existing local copy can be used, and which transcription,
+speaker, or retrieval steps the task needs. Keep this explanation brief and
+describe observable actions, not private reasoning.
+
+The bundled tools emit progress to stderr and leave their final JSON result on
+stdout. Relay meaningful stage changes and measured progress to the user; tool
+output alone may be hidden by the AI host. During long preparation or model
+inference, keep the user informed that the stage is still running. Use actual
+record or byte counts when available. Do not invent percentages, completion
+times, or successful outcomes for stages that have not finished.
+
+Progress messages must not contain transcript excerpts, passwords, private source
+IDs, or file paths. Once the result is ready, provide the relevant local output
+location separately. `AUDAY_PROGRESS=0` disables tool progress for integrations
+that need quiet stderr; it does not change the result JSON.
+
 ## Finish the user's task
 
 Deliver the requested answer or usable artifact with relevant sources and data coverage. Useful outcomes include a project brief, a decision history, follow-up items, a reflection, or a local audio-analysis result. Keep explicit decisions separate from inferred suggestions, and state missing evidence without inventing it.

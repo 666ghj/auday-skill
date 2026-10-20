@@ -3,6 +3,7 @@
 import contextlib
 import io
 import json
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -51,13 +52,15 @@ class AudioRunnerTests(unittest.TestCase):
             self.fail("Unexpected subprocess")
 
     def execute(self, extra=()):
-        stream = io.StringIO()
+        stream, progress_stream = io.StringIO(), io.StringIO()
         with patch.object(sys, "argv", self.arguments + list(extra)), \
                 patch.object(refine_audio.shutil, "which", return_value="/synthetic/tool"), \
                 patch.object(refine_audio.subprocess, "run",
                              side_effect=self.synthetic_process) as processes, \
-                contextlib.redirect_stdout(stream):
+                patch.dict(os.environ, {"AUDAY_PROGRESS": "1"}), \
+                contextlib.redirect_stdout(stream), contextlib.redirect_stderr(progress_stream):
             refine_audio.main()
+        self.progress = progress_stream.getvalue()
         return json.loads(stream.getvalue()), processes
 
     def test_default_runs_diarization_and_preserves_source(self):
@@ -100,6 +103,12 @@ class AudioRunnerTests(unittest.TestCase):
         )
         self.assertIn("speaker_01", (self.output / "transcript.md").read_text())
         self.assertEqual(self.audio.read_bytes(), source)
+        self.assertIn("Identifying anonymous speaker turns", self.progress)
+        self.assertIn("Speaker diarization complete", self.progress)
+        self.assertIn("Local audio analysis complete", self.progress)
+        self.assertNotIn("First voice", self.progress)
+        self.assertNotIn(str(self.root), self.progress)
+        self.assertNotIn("%", self.progress)
 
     def test_explicit_opt_out_needs_no_speaker_models_or_packages(self):
         with patch.dict(sys.modules, {"sherpa_onnx": None, "soundfile": None}):
@@ -112,6 +121,9 @@ class AudioRunnerTests(unittest.TestCase):
         self.assertIn("- [00:00.00] First voice", transcript)
         self.assertNotIn("unknown：", transcript)
         self.assertNotIn("speaker_01", transcript)
+        self.assertIn("Transcribing audio with Whisper.cpp", self.progress)
+        self.assertIn("Transcription complete", self.progress)
+        self.assertNotIn("Identifying anonymous speaker turns", self.progress)
 
     def test_default_missing_models_stops_before_transcription(self):
         stream = io.StringIO()

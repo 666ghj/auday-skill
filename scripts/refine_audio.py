@@ -6,6 +6,7 @@ Weights must already exist locally. Results are derivatives; no phone write-back
 import argparse, hashlib, json, math, os, shutil, subprocess, sys, time, wave
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from progress import report
 
 
 def digest(path):
@@ -69,6 +70,7 @@ def source_spans(start, end, timeline):
 
 def run(args):
     os.umask(0o077)
+    report("Preparing local audio analysis", force=True)
     audio = args.audio.expanduser().resolve()
     model = args.model.expanduser().resolve()
     out = args.output.expanduser().resolve()
@@ -100,6 +102,7 @@ def run(args):
     if asset and asset.get("sha256") != fingerprint:
         raise ValueError("asset_source_hash_mismatch")
     wav = out / "prepared.wav"
+    report("Preparing 16 kHz mono audio")
     subprocess.run(
         [
             "ffmpeg",
@@ -124,6 +127,8 @@ def run(args):
         raise ValueError(
             "use_individual_assets_up_to_two_hours; never silently truncate"
         )
+    report("Audio preparation complete")
+    report("Transcribing audio with Whisper.cpp")
     with (out / "engine.log").open("w") as log:
         subprocess.run(
             [
@@ -170,9 +175,11 @@ def run(args):
                 "speaker": "unknown",
             }
         )
+    report("Transcription complete")
     turns = []
     diarization = {"status": "not_requested"}
     if args.diarize:
+        report("Identifying anonymous speaker turns")
         config = sherpa_onnx.OfflineSpeakerDiarizationConfig(
             segmentation=sherpa_onnx.OfflineSpeakerSegmentationModelConfig(
                 pyannote=sherpa_onnx.OfflineSpeakerSegmentationPyannoteModelConfig(
@@ -216,8 +223,10 @@ def run(args):
             "identityScope": "anonymous-within-this-asset",
             "turns": turns,
         }
+        report("Speaker diarization complete")
     if digest(audio) != fingerprint:
         raise ValueError("source_audio_changed_during_job")
+    report("Saving local analysis results")
     result = {
         "schemaVersion": 1,
         "kind": "derived_transcript",
@@ -261,6 +270,7 @@ def run(args):
         speaker = f"{row['speaker']}：" if args.diarize else ""
         lines.append(f"- [{stamp}] {speaker}{row['text']}")
     (out / "transcript.md").write_text("\n".join(lines) + "\n")
+    report("Local audio analysis complete")
     print(
         json.dumps(
             {

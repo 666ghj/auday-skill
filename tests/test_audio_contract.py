@@ -1,5 +1,6 @@
-import sys, unittest, tempfile, hashlib, base64, json
+import sys, unittest, tempfile, hashlib, base64, json, contextlib, io, os
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from refine_audio import attach_speakers, source_spans
@@ -137,10 +138,17 @@ class OnDemandAudioContractTests(unittest.TestCase):
     def test_sync_leaves_audio_unprepared_and_download_preserves_source_mapping(self):
         self.app.sync()
         self.assertEqual(self.calls, ["status", "list", "assets"])
-        result = self.app.audio("sample")
+        with patch.dict(os.environ, {"AUDAY_PROGRESS": "1"}), \
+                contextlib.redirect_stderr(io.StringIO()) as progress:
+            result = self.app.audio("sample")
         self.assertEqual(Path(result["path"]).read_bytes(), self.body)
         self.assertEqual(Path(result["path"]).suffix, ".caf")
         self.assertEqual(result["asset"]["timeline"][0]["recordedStart"], "2026-10-20T09:00:00+09:00")
+        self.assertIn("Preparing requested audio on phone", progress.getvalue())
+        self.assertIn(f"{len(self.body)}/{len(self.body)} bytes (100%)", progress.getvalue())
+        self.assertIn("Audio saved and verified", progress.getvalue())
+        self.assertNotIn(self.asset_id, progress.getvalue())
+        self.assertNotIn(self.snapshot, progress.getvalue())
         self.offline = True
         self.assertTrue(self.app.audio("sample")["cacheHit"])
 

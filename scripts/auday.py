@@ -17,6 +17,7 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timezone
+from progress import report
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_HOME = Path.home() / "Library/Application Support/AudayWorkflow"
@@ -108,6 +109,7 @@ class Auday:
         return result
 
     def sync(self):
+        report("Checking phone status", force=True)
         status = self.prepared_status()
         snapshot = status["snapshot"]
         if (
@@ -152,6 +154,7 @@ class Auday:
                         "syncedAt": now(), "capabilities": capabilities, **source_freshness
                     }.items()],
                 )
+            report("Snapshot unchanged; local library is current")
             return {
                 **self.metadata(),
                 "changedRecords": 0,
@@ -164,6 +167,9 @@ class Auday:
             ("assets", "assets", asset_rows),
         ]:
             offset = 0
+            total = status["recordCount" if op == "list" else "assetCount"]
+            stage = "Receiving text records" if op == "list" else "Receiving audio catalog"
+            report(stage, 0, total, "records" if op == "list" else "assets")
             while True:
                 reply = self.request({
                     "op": op, "offset": offset, "snapshot": snapshot,
@@ -177,6 +183,7 @@ class Auday:
                 if op == "list":
                     rows = [self.complete_record(row, snapshot, capabilities, staged_records) for row in rows]
                 destination.extend(rows)
+                report(stage, len(destination), total, "records" if op == "list" else "assets")
                 if len(destination) > 1000000:
                     raise ValueError("library_too_large")
                 next_offset = reply.get("nextOffset")
@@ -185,6 +192,7 @@ class Auday:
                 if next_offset != offset + len(rows) or next_offset <= offset:
                     raise ValueError("invalid_cursor")
                 offset = next_offset
+        report("Validating synchronized snapshot")
         if (
             len(record_rows) != status["recordCount"]
             or len(asset_rows) != status["assetCount"]
@@ -251,6 +259,7 @@ class Auday:
             else row
             for row in asset_rows
         ]
+        report("Saving local library")
         with self.db:
             self.db.execute("DELETE FROM records")
             self.db.execute("DELETE FROM assets")
@@ -276,6 +285,7 @@ class Auday:
             )
         for path in staged_records:
             path.unlink(missing_ok=True)
+        report("Synchronization complete")
         return {**meta, "changedRecords": changed, "audioDownloaded": False}
 
     def prepared_status(self):
@@ -288,6 +298,7 @@ class Auday:
         # One explicit attempt per sync. Polling does not restart a failed job
         # or chase each new recording publication indefinitely.
         deadline = time.monotonic() + 120
+        report("Preparing text snapshot on phone")
         status = self.request({"op": "prepareSnapshot", "retry": True})
         while status.get("snapshotState") == "preparing":
             if time.monotonic() >= deadline:
@@ -298,6 +309,7 @@ class Auday:
             raise ValueError("snapshot_preparation_failed")
         if status.get("snapshotState") != "ready":
             raise ValueError("snapshot_not_ready")
+        report("Text snapshot ready")
         return status
 
     def complete_record(self, row, snapshot, capabilities, staged_records):
@@ -323,6 +335,7 @@ class Auday:
         offset = partial.stat().st_size if partial.exists() else 0
         if offset > size:
             raise ValueError("invalid_record_partial_size")
+        report("Downloading large text record", offset, size, "bytes", force=True)
         with partial.open("ab") as output:
             os.chmod(partial, 0o600)
             while offset < size:
@@ -346,6 +359,8 @@ class Auday:
                     raise ValueError("record_chunk_hash_mismatch")
                 output.write(data)
                 offset += len(data)
+                report("Downloading large text record", offset, size, "bytes")
+        report("Verifying large text record")
         if sha(partial) != digest:
             partial.replace(directory / (digest + ".corrupt"))
             raise ValueError("record_hash_mismatch")
@@ -354,6 +369,7 @@ class Auday:
         if not isinstance(complete, dict) or complete.get("id") != row["id"] or "recordTransfer" in complete:
             raise ValueError("record_identity_mismatch")
         staged_records.append(partial)
+        report("Large text record verified")
         return complete
 
     def search(self, query="", kind=None, date=None, limit=20, offset=0):
@@ -426,6 +442,7 @@ class Auday:
             raise ValueError("on_demand_audio_not_supported")
         snapshot = self.metadata()["snapshot"]
         request = {"op": "prepareAudio", "id": asset["id"], "snapshot": snapshot}
+        report("Preparing requested audio on phone", force=True)
         try:
             reply = self.request(request, timeout=90)
         except ValueError as error:
@@ -470,6 +487,7 @@ class Auday:
         asset = {**asset, **ready}
         with self.db:
             self.db.execute("UPDATE assets SET body=? WHERE id=?", (json.dumps(asset), asset["id"]))
+        report("Requested audio ready")
         return asset
 
     def audio(self, identity):
@@ -498,6 +516,7 @@ class Auday:
             if re.fullmatch("[0-9a-f]{64}", saved_hash):
                 cached = self.root / "audio" / (saved_hash + asset_suffix + suffixes.get(asset.get("mime"), ".bin"))
                 if cached.is_file() and sha(cached) == saved_hash:
+                    report("Using verified cached audio", force=True)
                     return {"path": str(cached), "asset": asset, "cacheHit": True}
             asset = self.prepare_audio(asset)
         expected = asset["sha256"]
@@ -514,11 +533,13 @@ class Auday:
         target = folder / (expected + asset_suffix + suffix)
         temporary = folder / (expected + asset_suffix + ".partial")
         if target.exists() and sha(target) == expected:
+            report("Using verified cached audio", force=True)
             return {"path": str(target), "asset": asset, "cacheHit": True}
         offset = temporary.stat().st_size if temporary.exists() else 0
         if offset > size:
             raise ValueError("partial_size_invalid")
         preparation_retried = False
+        report("Downloading audio", offset, size, "bytes", force=True)
         with temporary.open("ab") as out:
             os.chmod(temporary, 0o600)
             while offset < size:
@@ -549,6 +570,8 @@ class Auday:
                 out.flush()
                 os.fsync(out.fileno())
                 offset += len(data)
+                report("Downloading audio", offset, size, "bytes")
+        report("Verifying downloaded audio")
         if sha(temporary) != expected:
             # Retain evidence without retrying a corrupt partial forever.
             temporary.replace(
@@ -561,6 +584,7 @@ class Auday:
             )
         temporary.replace(target)
         atomic_json(target.with_suffix(".asset.json"), asset)
+        report("Audio saved and verified")
         return {"path": str(target), "asset": asset, "cacheHit": False}
 
 

@@ -1,6 +1,9 @@
 import base64
+import contextlib
 import hashlib
+import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -110,6 +113,23 @@ class RecordTransferTests(unittest.TestCase):
         calls = len(self.peer.chunk_offsets)
         self.assertEqual(self.sync()["downloadedRecords"], 0)
         self.assertEqual(len(self.peer.chunk_offsets), calls)
+
+    def test_sync_reports_measured_progress_without_record_contents_or_ids(self):
+        stderr, stdout = io.StringIO(), io.StringIO()
+        with patch.dict(os.environ, {"AUDAY_PROGRESS": "1"}), \
+                contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(stdout):
+            result = self.sync()
+        output = stderr.getvalue()
+        self.assertIn("Preparing text snapshot on phone", output)
+        self.assertIn("Downloading large text record", output)
+        self.assertIn(f"{len(self.peer.body)}/{len(self.peer.body)} bytes (100%)", output)
+        self.assertIn("Receiving text records: 1/1 records (100%)", output)
+        self.assertIn("Synchronization complete", output)
+        self.assertNotIn(self.peer.record["id"], output)
+        self.assertNotIn(self.peer.record["text"], output)
+        self.assertNotIn(self.peer.snapshot, output)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertEqual(result["recordCount"], 1)
 
     def test_interruption_resumes_at_verified_prefix_without_replacing_cache(self):
         self.peer.interrupt_after = 2
