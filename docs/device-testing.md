@@ -59,6 +59,9 @@ For the missing Xcode Command Line Tools branch, verify a real fresh macOS accou
 - Change the password and confirm the old password cannot read new data.
 - Change the access scope and confirm the next sync reflects it. Existing copies should not be silently erased.
 - Lock the phone, switch apps, disconnect Wi-Fi, and sleep the Mac. Record the actual outcomes rather than assuming background support.
+- During a sync, add a recording and finish a transcription. Confirm that the transfer finishes with its original snapshot, reports its capture time, and includes the new saved content only after another explicit sync. A stale final flag must not trigger an automatic repeat.
+- Start two transfers for the same local profile and verify that the second waits; start a different profile and verify it remains independent. Check that an older audio preparation cannot overwrite a newer catalogue.
+- With a lease-capable phone, start an update from another computer while the first transfer is active. Confirm that each transfer keeps its selected generation and that completion/failure releases its lease. Keep this device observation separate from synthetic concurrency tests.
 
 ## Wireless and no-cloud claims
 

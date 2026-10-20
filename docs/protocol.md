@@ -24,8 +24,10 @@ Successful replies include `ok`, `schemaVersion: 1`, `snapshot`, and `sourceDevi
 
 | `op` | Request fields | Result |
 | --- | --- | --- |
-| `status` | none | Connection scope/capabilities and snapshot readiness; never starts preparation |
-| `prepareSnapshot` | optional `retry: true` | Start or join one on-demand preparation; return immediately |
+| `status` | optional `lease` | Connection scope/capabilities and snapshot readiness; a lease selects its bound preparation/generation; never starts preparation |
+| `prepareSnapshot` | optional `retry: true`, `useSnapshotLease: true` | Start or join one on-demand preparation; return immediately, with a lease when requested and supported |
+| `acquireSnapshot` | `snapshot` | Acquire a lease for an already prepared generation, when supported |
+| `releaseSnapshot` | `lease`, optional `snapshot` | Release this token, including a pending preparation without an identity |
 | `list` | `offset`, `snapshot`, optional `allowRecordChunks: true` | Up to 100 records or record-transfer descriptors and `nextOffset` |
 | `assets` | `offset`, `snapshot` | Up to 100 asset descriptors and `nextOffset`; no server paths |
 | `read` | `id`, optional `snapshot`, optional `allowRecordChunks: true` | One inline record or record-transfer descriptor |
@@ -35,11 +37,36 @@ Successful replies include `ok`, `schemaVersion: 1`, `snapshot`, and `sourceDevi
 
 Audio chunks are at most 256 KiB. Unknown operations, including mutation requests, are rejected. Errors use `ok: false` and a bounded error identifier. The server accepts asset IDs, never arbitrary filesystem paths.
 
+When `capabilities.snapshotLeases` is true, snapshot data operations (`list`,
+`assets`, `read`, `recordChunk`, `prepareAudio`, and `audio`) also accept the
+operation's `lease` token. Clients do not send lease fields or operations to
+companions that do not advertise this capability.
+
 ### On-demand snapshots and large records
 
 Skill 0.3.0 supports `capabilities.onDemandSnapshot` and `capabilities.chunkedRecords`. The phone opens its authenticated listener without reading the archive. Pairing and `status` are control operations only. `sync` explicitly sends `prepareSnapshot`, then polls `status` while `snapshotState` is `preparing`. The other states are `idle`, `ready`, and `failed`. One sync starts at most one preparation attempt and has a bounded 120-second polling window, with individual request timeouts. A failure needs a new explicit sync/retry; polling cannot create a retry loop.
 
 The phone coalesces concurrent preparation requests. Source changes mark the existing snapshot non-current and do not automatically read the archive. A later explicit sync refreshes it. Closing access cancels preparation, revokes the snapshot and closes clients. A preparation failure leaves the connection available so the desktop can inspect status or request a retry.
+
+For a lease-capable phone, `prepareSnapshot` with `useSnapshotLease: true` returns
+an independent UUID `lease` while the state is either `preparing` or `ready`.
+Poll `status` with that token; the result remains bound to this preparation even
+if another client starts a later one. Once ready, keep its snapshot identity and
+token for every data request. There is no unprotected ready-to-acquire interval.
+One explicit sync captures one generation and then ends; newer arrivals are for
+the next explicit sync, not a reason to repeat preparation automatically.
+
+Release the token in a finally path after success, cancellation, or failure.
+Pending/failed preparation can be released using only the token. A separate
+audio operation first checks for a verified local file; if it needs the phone,
+`acquireSnapshot` protects the locally cached generation and the same token is
+reused through nested audio preparation and every chunk. A missing or evicted
+generation stops the operation rather than silently selecting a new version.
+The phone expires idle tokens after five minutes, renews them on requests, and
+keeps in-flight operations protected. Its bounded retained generations can
+return `snapshot_busy` when all available generations are active. A failed
+release is safe to report without discarding already verified local data;
+idle expiration eventually releases it.
 
 The 2 MiB frame limit applies to each message, not an entire logical record. A record that cannot fit inline is represented in `list`/`read` as:
 
@@ -63,7 +90,7 @@ Before downloading such an asset, the client sends `prepareAudio` with `id` and 
 
 The phone maintains a bounded preparation cache. If an entry was evicted during transfer, the client may prepare it once more and continue only if its hash and size still match. Changed sources or snapshots stop the download for an explicit resync.
 
-When present, `snapshotCapturedAt` and `snapshotCurrent` describe the phone's source snapshot independently of the Mac's `syncedAt`. A false current flag must not be presented as a fresh complete archive.
+When present, `snapshotCapturedAt` and `snapshotCurrent` describe the phone's source snapshot independently of the Mac's `syncedAt`. The client performs one final plain `status` check, without a lease or another preparation. It preserves the original capture time and reports `sourceSnapshotCurrent: true` only if the device, snapshot, and scope match and the final flag is the boolean `true`. A newer generation, unavailable status, or missing/invalid flag yields false. This reflects the completion check, not a promise that the phone remains unchanged afterward.
 
 ## Scopes and snapshots
 
@@ -74,6 +101,14 @@ When present, `snapshotCapturedAt` and `snapshotCurrent` describe the phone's so
 The test peer reads an immutable synthetic `library.json` projection. Snapshot identity hashes the projection and scope. A production adapter must produce stable IDs and a consistent saved-data snapshot; do not expose a mutable app database directly. This fixture publisher is test-only; it is not a mobile implementation or a desktop runtime feature.
 
 The client commits complete snapshots transactionally. An unchanged identity avoids body downloads. An interrupted or inconsistent snapshot leaves the previous cache intact. This version does not implement a durable incremental event log. Scope reductions update subsequent syncs but cannot recall exported or offline copies.
+
+Writers sharing a canonical profile directory hold a reentrant thread lock and a
+cross-process `operation.lock` file for the entire sync or audio operation. This
+prevents an earlier sync from overwriting a later one and prevents a prepared
+asset from being written into another snapshot's catalogue. Different profiles
+are independent; cached reads do not wait for network operations. The lock file
+is retained rather than removed on release. Forked workers must create new
+clients and SQLite connections instead of reusing inherited instances.
 
 ## Data projection
 

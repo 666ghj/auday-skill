@@ -170,9 +170,10 @@ class WorkflowTests(unittest.TestCase):
 
         def interrupted(payload):
             nonlocal calls
-            calls += 1
-            if calls == 2:
-                raise OSError("synthetic_disconnect")
+            if payload["op"] == "audio":
+                calls += 1
+                if calls == 2:
+                    raise OSError("synthetic_disconnect")
             return original(payload)
 
         self.app.transport = interrupted

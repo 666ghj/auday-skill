@@ -15,12 +15,89 @@ import fcntl
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
+import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from progress import report
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_HOME = Path.home() / "Library/Application Support/AudayWorkflow"
+_profile_locks = {}
+_profile_locks_guard = threading.Lock()
+
+
+class ProfileOperationLock:
+    """Serialize a profile's writers across processes and allow nested operations."""
+
+    def __init__(self, root):
+        self.path = root / "operation.lock"
+        self.process_id = os.getpid()
+        self.thread_lock = threading.RLock()
+        self.depth = 0
+        self.stream = None
+
+    def __enter__(self):
+        if os.getpid() != self.process_id:
+            raise RuntimeError("inherited_client: create a new Auday client after fork")
+        if not self.thread_lock.acquire(blocking=False):
+            report("Waiting for another operation on this local library", force=True)
+            self.thread_lock.acquire()
+        try:
+            if self.depth == 0:
+                self.stream = self.path.open("a")
+                os.chmod(self.path, 0o600)
+                try:
+                    fcntl.flock(self.stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                except BlockingIOError:
+                    report("Waiting for another operation on this local library", force=True)
+                    fcntl.flock(self.stream, fcntl.LOCK_EX)
+            self.depth += 1
+            return self
+        except BaseException:
+            if self.stream is not None:
+                self.stream.close()
+                self.stream = None
+            self.thread_lock.release()
+            raise
+
+    def __exit__(self, *_):
+        try:
+            self.depth -= 1
+            if self.depth == 0:
+                try:
+                    fcntl.flock(self.stream, fcntl.LOCK_UN)
+                finally:
+                    self.stream.close()
+                    self.stream = None
+        finally:
+            self.thread_lock.release()
+
+
+def profile_operation_lock(root):
+    # Every Auday instance for a canonical profile shares the same thread lock.
+    # A lock file alone does not safely express nested operations in one process.
+    root = Path(root).resolve()
+    with _profile_locks_guard:
+        if root not in _profile_locks:
+            _profile_locks[root] = ProfileOperationLock(root)
+        return _profile_locks[root]
+
+
+def reset_profile_locks_after_fork():
+    global _profile_locks, _profile_locks_guard
+    for lock in _profile_locks.values():
+        if lock.stream is not None:
+            # Close the inherited descriptor without unlocking the parent's
+            # shared open-file description. Child workers create their own DB.
+            lock.stream.close()
+    _profile_locks = {}
+    _profile_locks_guard = threading.Lock()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=reset_profile_locks_after_fork)
 
 
 def now():
@@ -47,6 +124,13 @@ def atomic_json(path, value):
     temporary.replace(path)
 
 
+def valid_lease_token(token):
+    try:
+        return isinstance(token, str) and str(uuid.UUID(token)) == token.lower()
+    except ValueError:
+        return False
+
+
 class Auday:
     def __init__(self, home=DEFAULT_HOME, profile="default", transport=None):
         if not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", profile):
@@ -54,8 +138,10 @@ class Auday:
         self.root = Path(home).expanduser().resolve() / profile
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(self.root, 0o700)
+        self.operation_lock = profile_operation_lock(self.root)
         self.profile = profile
         self.transport = transport
+        self.snapshot_lease = None
         self.keychain_account = (
             "profile-" + hashlib.sha256(str(self.root).encode()).hexdigest()[:32]
         )
@@ -83,6 +169,12 @@ class Auday:
         return json.loads(path.read_text())
 
     def request(self, payload, timeout=15):
+        if self.snapshot_lease and payload.get("op") in (
+            "list", "assets", "read", "recordChunk", "prepareAudio", "audio",
+        ):
+            if payload.get("snapshot") != self.snapshot_lease["snapshot"]:
+                raise ValueError("snapshot_changed")
+            payload = {**payload, "lease": self.snapshot_lease["lease"]}
         if self.transport:
             result = self.transport(payload)
         else:
@@ -108,9 +200,83 @@ class Auday:
             raise ValueError("source_device_changed: use a new profile")
         return result
 
+    @contextmanager
+    def snapshot_access(self, snapshot, capabilities, *, prepare_if_needed=False,
+                        prepared_lease=None):
+        if self.snapshot_lease is not None:
+            if self.snapshot_lease["snapshot"] != snapshot:
+                raise ValueError("snapshot_changed")
+            yield
+            return
+        if (
+            prepared_lease is None and prepare_if_needed
+            and capabilities.get("snapshotLeases") is not True
+        ):
+            # A phone may have been upgraded since this catalogue was cached.
+            # Discover leases before beginning any uncached audio operation so
+            # newly supported protection covers preparation and every chunk.
+            status = self.request({"op": "status"})
+            if status.get("access") != "text-and-audio-read-only":
+                raise ValueError("audio_access_denied")
+            capabilities = status.get("capabilities", {})
+            if not isinstance(capabilities, dict):
+                raise ValueError("invalid_capabilities")
+        if prepared_lease is None and capabilities.get("snapshotLeases") is not True:
+            yield
+            return
+        if prepared_lease is not None:
+            reply = {"snapshot": snapshot, "lease": prepared_lease}
+        else:
+            request = {"op": "acquireSnapshot", "snapshot": snapshot}
+            try:
+                reply = self.request(request)
+            except ValueError as error:
+                if str(error) != "snapshot_not_ready" or not prepare_if_needed:
+                    raise
+                status = self.prepared_status()
+                failure = (
+                    "audio_access_denied" if status.get("access") != "text-and-audio-read-only"
+                    else "snapshot_changed" if status.get("snapshot") != snapshot else None
+                )
+                if failure:
+                    if status.get("lease") is not None:
+                        self.release_snapshot_lease(status["lease"])
+                    raise ValueError(failure) from None
+                # A lease acquired during preparation already protects this
+                # generation, including the interval before its first page.
+                reply = status if status.get("lease") is not None else self.request(request)
+        token = reply.get("lease")
+        if not valid_lease_token(token):
+            raise ValueError("invalid_snapshot_lease")
+        try:
+            if reply.get("snapshot") != snapshot:
+                raise ValueError("invalid_snapshot_lease")
+            self.snapshot_lease = {"snapshot": snapshot, "lease": token}
+            yield
+        finally:
+            self.snapshot_lease = None
+            self.release_snapshot_lease(token)
+
+    def release_snapshot_lease(self, token):
+        try:
+            # Pending preparation may not have a snapshot identity yet.
+            self.request({"op": "releaseSnapshot", "lease": token})
+        except (ValueError, OSError, subprocess.TimeoutExpired):
+            report("Snapshot access finished; the phone will expire its temporary lease")
+
     def sync(self):
-        report("Checking phone status", force=True)
-        status = self.prepared_status()
+        with self.operation_lock:
+            report("Checking phone status", force=True)
+            status = self.prepared_status()
+            capabilities = status.get("capabilities", {})
+            with self.snapshot_access(
+                status.get("snapshot"),
+                capabilities if isinstance(capabilities, dict) else {},
+                prepared_lease=status.get("lease"),
+            ):
+                return self._sync(status)
+
+    def _sync(self, status):
         snapshot = status["snapshot"]
         if (
             not isinstance(status.get("sourceDeviceID"), str)
@@ -131,22 +297,24 @@ class Auday:
             raise ValueError("invalid_snapshot_counts")
         if status["access"] == "text-only-read-only" and status["assetCount"] != 0:
             raise ValueError("text_scope_contains_audio")
-        previous = self.metadata()
         capabilities = status.get("capabilities", {})
         if not isinstance(capabilities, dict):
             raise ValueError("invalid_capabilities")
-        source_freshness = {
-            "sourceSnapshotAt": status.get("snapshotCapturedAt"),
-            "sourceSnapshotCurrent": status.get("snapshotCurrent", True),
-        }
-        if type(source_freshness["sourceSnapshotCurrent"]) is not bool:
+        if type(status.get("snapshotCurrent", False)) is not bool:
             raise ValueError("invalid_snapshot_freshness")
+        return self._sync_snapshot(status)
+
+    def _sync_snapshot(self, status):
+        snapshot = status["snapshot"]
+        capabilities = status.get("capabilities", {})
+        previous = self.metadata()
         if (
             previous.get("snapshot") == snapshot
             and previous.get("recordCount") == status["recordCount"]
             and previous.get("assetCount") == status["assetCount"]
             and previous.get("access") == status["access"]
         ):
+            source_freshness = self.final_source_freshness(status)
             with self.db:
                 self.db.executemany(
                     "INSERT OR REPLACE INTO metadata VALUES(?,?)",
@@ -237,6 +405,7 @@ class Auday:
             before.get(row["id"]) != json.dumps(row, ensure_ascii=False, sort_keys=True)
             for row in record_rows
         )
+        source_freshness = self.final_source_freshness(status)
         meta = {
             "sourceDeviceID": status["sourceDeviceID"],
             "snapshot": snapshot,
@@ -288,6 +457,27 @@ class Auday:
         report("Synchronization complete")
         return {**meta, "changedRecords": changed, "audioDownloaded": False}
 
+    def final_source_freshness(self, captured):
+        """Observe freshness without replacing or restarting this fixed snapshot."""
+        result = {
+            "sourceSnapshotAt": captured.get("snapshotCapturedAt"),
+            "sourceSnapshotCurrent": False,
+        }
+        try:
+            latest = self.request({"op": "status"})
+        except (ValueError, OSError, subprocess.TimeoutExpired):
+            report("Source freshness unavailable; keeping the verified snapshot")
+            return result
+        result["sourceSnapshotCurrent"] = (
+            latest.get("snapshot") == captured["snapshot"]
+            and latest.get("sourceDeviceID") == captured["sourceDeviceID"]
+            and latest.get("access") == captured["access"]
+            and latest.get("snapshotCurrent") is True
+        )
+        if not result["sourceSnapshotCurrent"]:
+            report("Keeping this snapshot; newer phone data can be included in the next sync")
+        return result
+
     def prepared_status(self):
         status = self.request({"op": "status"})
         capabilities = status.get("capabilities", {})
@@ -299,18 +489,38 @@ class Auday:
         # or chase each new recording publication indefinitely.
         deadline = time.monotonic() + 120
         report("Preparing text snapshot on phone")
-        status = self.request({"op": "prepareSnapshot", "retry": True})
-        while status.get("snapshotState") == "preparing":
-            if time.monotonic() >= deadline:
-                raise ValueError("snapshot_preparation_timed_out")
-            time.sleep(0.25)
-            status = self.request({"op": "status"})
-        if status.get("snapshotState") == "failed":
-            raise ValueError("snapshot_preparation_failed")
-        if status.get("snapshotState") != "ready":
-            raise ValueError("snapshot_not_ready")
-        report("Text snapshot ready")
-        return status
+        request = {"op": "prepareSnapshot", "retry": True}
+        if capabilities.get("snapshotLeases") is True:
+            request["useSnapshotLease"] = True
+        token = None
+        handed_off = False
+        try:
+            status = self.request(request)
+            if request.get("useSnapshotLease") is True:
+                token = status.get("lease")
+                if not valid_lease_token(token):
+                    token = None
+                    raise ValueError("invalid_snapshot_lease")
+            while status.get("snapshotState") == "preparing":
+                if time.monotonic() >= deadline:
+                    raise ValueError("snapshot_preparation_timed_out")
+                time.sleep(0.25)
+                poll = {"op": "status"}
+                if token is not None:
+                    poll["lease"] = token
+                status = self.request(poll)
+            if status.get("snapshotState") == "failed":
+                raise ValueError("snapshot_preparation_failed")
+            if status.get("snapshotState") != "ready":
+                raise ValueError("snapshot_not_ready")
+            if token is not None:
+                status = {**status, "lease": token}
+            report("Text snapshot ready")
+            handed_off = True
+            return status
+        finally:
+            if token is not None and not handed_off:
+                self.release_snapshot_lease(token)
 
     def complete_record(self, row, snapshot, capabilities, staged_records):
         if not isinstance(row, dict) or "recordTransfer" not in row:
@@ -437,22 +647,42 @@ class Auday:
             "syncedAt": self.metadata().get("syncedAt"),
         }
 
-    def prepare_audio(self, asset):
-        if self.metadata().get("access") != "text-and-audio-read-only":
+    def prepare_audio(self, asset, *, snapshot=None):
+        with self.operation_lock:
+            return self._prepare_audio(asset, snapshot=snapshot)
+
+    def _prepare_audio(self, asset, *, snapshot=None):
+        metadata = self.metadata()
+        if metadata.get("access") != "text-and-audio-read-only":
             raise ValueError("audio_access_denied")
-        if self.metadata().get("capabilities", {}).get("onDemandAudio") is not True:
+        if metadata.get("capabilities", {}).get("onDemandAudio") is not True:
             raise ValueError("on_demand_audio_not_supported")
-        snapshot = self.metadata()["snapshot"]
+        if snapshot is not None and metadata.get("snapshot") != snapshot:
+            raise ValueError("snapshot_changed")
+        snapshot = metadata["snapshot"]
+        row = self.db.execute("SELECT body FROM assets WHERE id=?", (asset["id"],)).fetchone()
+        if not row or json.loads(row[0]).get("contentRevision") != asset.get("contentRevision"):
+            raise ValueError("audio_changed: sync again before retrying")
+        with self.snapshot_access(snapshot, metadata.get("capabilities", {}), prepare_if_needed=True):
+            return self._request_prepared_audio(asset, snapshot)
+
+    def _request_prepared_audio(self, asset, snapshot):
         request = {"op": "prepareAudio", "id": asset["id"], "snapshot": snapshot}
         report("Preparing requested audio on phone", force=True)
         try:
             reply = self.request(request, timeout=90)
         except ValueError as error:
-            if str(error) != "snapshot_not_ready":
+            if str(error) != "snapshot_not_ready" or self.snapshot_lease is not None:
                 raise
             # Access may have been reopened since the cache was synchronized.
             # Prepare once, then require the same source version before reading.
             status = self.prepared_status()
+            if status.get("lease") is not None:
+                # Capabilities changed after the outer audio operation started.
+                # Do not use a new lease only for preparation and leave the
+                # subsequent download unprotected. An explicit sync can retry.
+                self.release_snapshot_lease(status["lease"])
+                raise ValueError("snapshot_changed") from None
             if status.get("access") != "text-and-audio-read-only":
                 raise ValueError("audio_access_denied") from None
             if status.get("snapshot") != snapshot:
@@ -493,7 +723,12 @@ class Auday:
         return asset
 
     def audio(self, identity):
-        if self.metadata().get("access") == "text-only-read-only":
+        with self.operation_lock:
+            return self._audio(identity)
+
+    def _audio(self, identity):
+        metadata = self.metadata()
+        if metadata.get("access") == "text-only-read-only":
             raise ValueError(
                 "audio_access_denied: enable text and audio on the phone, then sync"
             )
@@ -503,6 +738,7 @@ class Auday:
         if not row:
             raise ValueError("asset_not_in_synced_snapshot")
         asset = json.loads(row[0])
+        snapshot = metadata["snapshot"]
         suffixes = {
             "audio/mp4": ".m4a", "audio/wav": ".wav", "audio/x-wav": ".wav",
             "audio/x-caf": ".caf", "audio/aac": ".aac",
@@ -513,14 +749,18 @@ class Auday:
             "-" + hashlib.sha256(identity.encode()).hexdigest()
             if asset.get("preparation") == "on-demand" else ""
         )
+        saved_hash = str(asset.get("sha256", ""))
+        if re.fullmatch("[0-9a-f]{64}", saved_hash):
+            cached = self.root / "audio" / (saved_hash + asset_suffix + suffixes.get(asset.get("mime"), ".bin"))
+            if cached.is_file() and sha(cached) == saved_hash:
+                report("Using verified cached audio", force=True)
+                return {"path": str(cached), "asset": asset, "cacheHit": True}
+        with self.snapshot_access(snapshot, metadata.get("capabilities", {}), prepare_if_needed=True):
+            return self._download_audio(identity, asset, snapshot, asset_suffix, suffixes)
+
+    def _download_audio(self, identity, asset, snapshot, asset_suffix, suffixes):
         if asset.get("preparation") == "on-demand":
-            saved_hash = str(asset.get("sha256", ""))
-            if re.fullmatch("[0-9a-f]{64}", saved_hash):
-                cached = self.root / "audio" / (saved_hash + asset_suffix + suffixes.get(asset.get("mime"), ".bin"))
-                if cached.is_file() and sha(cached) == saved_hash:
-                    report("Using verified cached audio", force=True)
-                    return {"path": str(cached), "asset": asset, "cacheHit": True}
-            asset = self.prepare_audio(asset)
+            asset = self.prepare_audio(asset, snapshot=snapshot)
         expected = asset["sha256"]
         size = asset["size"]
         if (
@@ -547,7 +787,7 @@ class Auday:
             while offset < size:
                 request = {
                     "op": "audio", "id": identity, "offset": offset,
-                    "length": min(262144, size - offset), "snapshot": self.metadata()["snapshot"],
+                    "length": min(262144, size - offset), "snapshot": snapshot,
                 }
                 try:
                     reply = self.request(request)
@@ -555,13 +795,14 @@ class Auday:
                     if str(error) != "audio_not_prepared" or preparation_retried or asset.get("preparation") != "on-demand":
                         raise
                     preparation_retried = True
-                    refreshed = self.prepare_audio(asset)
+                    refreshed = self.prepare_audio(asset, snapshot=snapshot)
                     if refreshed["sha256"] != expected or refreshed["size"] != size:
                         raise ValueError("audio_changed: sync again before retrying") from None
                     reply = self.request(request)
                 data = base64.b64decode(reply["data"], validate=True)
                 if (
-                    reply["offset"] != offset
+                    reply.get("snapshot") != snapshot
+                    or reply["offset"] != offset
                     or reply["sha256"] != expected
                     or reply["size"] != size
                     or len(data) != min(262144, size - offset)

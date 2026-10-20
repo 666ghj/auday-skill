@@ -137,7 +137,7 @@ class OnDemandAudioContractTests(unittest.TestCase):
 
     def test_sync_leaves_audio_unprepared_and_download_preserves_source_mapping(self):
         self.app.sync()
-        self.assertEqual(self.calls, ["status", "list", "assets"])
+        self.assertEqual(self.calls, ["status", "list", "assets", "status"])
         with patch.dict(os.environ, {"AUDAY_PROGRESS": "1"}), \
                 contextlib.redirect_stderr(io.StringIO()) as progress:
             result = self.app.audio("sample")

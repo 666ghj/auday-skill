@@ -60,9 +60,22 @@ The default keyword search combines whitespace-separated terms with AND and supp
 
 With Skill 0.3.0 and an on-demand companion, enabling access and pairing do not prepare the archive. `status --live` may show `snapshotState: "idle"` and null counts. Run `sync` to request preparation; it waits for that one attempt before reading the snapshot. Large text records are downloaded in verified chunks and reassembled completely. An interrupted transfer can resume on the next sync, while the last complete cache remains usable.
 
+Every invocation has a finite endpoint: capture one saved-data snapshot, transfer and verify it, then finish. New recordings or transcripts arriving while it runs are excluded from that snapshot. The client checks source freshness once at the end without starting another preparation. `sourceSnapshotAt` remains the capture time; `syncedAt` describes the local synchronization. `sourceSnapshotCurrent` is true only when that final check confirms the same device, snapshot, and scope are still current. A failed check, an unknown flag, or a newer snapshot leaves it false. This is not live monitoring after completion.
+
+When the user says that new content is available or asks to refresh/sync again, run:
+
+```text
+/bin/sh <skill-root>/scripts/bootstrap.sh sync
+/bin/sh <skill-root>/scripts/bootstrap.sh index-status
+```
+
+If an existing semantic index is configured, run `bootstrap.sh index` once after the sync. It reuses unchanged vectors and updates changed records. If no index exists, finish the text update without downloading a model or enabling a new capability. Missing dependencies or an index-update failure should be reported as a separate remaining limitation, not retried indefinitely. State the completed snapshot's capture time and whether more phone content may be available for the next explicit update. Do not restart merely because `sourceSnapshotCurrent` is false, and do not run a background update loop.
+
+Operations that change the same local profile—sync, audio preparation, and audio download—wait for one another. Other profiles and cached reads remain available. A compatible phone also keeps the selected snapshot available under a temporary lease throughout a transfer, so another computer's update does not switch the content halfway through. Leases are released on success or failure; they do not make phone access permanent.
+
 `audio` resumes partial downloads, verifies every chunk and the final SHA-256, and returns a local file path plus asset metadata. The adjacent `.asset.json` preserves provenance and timeline mappings. Audio metadata does not imply that the audio is downloaded.
 
-With a compatible phone, the audio catalogue is lightweight: the `audio` command prepares only the requested recording before downloading it. Allow that bounded preparation to finish rather than fetching every asset to test a connection. If `sourceSnapshotCurrent` is false, the phone is still refreshing or could not refresh its saved-data snapshot; do not treat a recent `syncedAt` as proof that the source is current. Reopen access once if preparation has failed.
+With a compatible phone, the audio catalogue is lightweight: the `audio` command prepares only the requested recording before downloading it. It keeps one snapshot identity for preparation and every chunk. Verified downloaded files can be reused offline without contacting the phone. Allow bounded preparation to finish rather than fetching every asset to test a connection. Do not treat a recent `syncedAt` as proof that the source is current.
 
 ## Recovery
 
@@ -71,6 +84,7 @@ With a compatible phone, the audio catalogue is lightweight: the `audio` command
 | `not_paired` or missing Keychain secret | Start the local pairing prompt |
 | `awaiting_phone_or_wrong_password` | Check the active phone page, reachable LAN, local-network permission, and matching password; do not retry without a bound |
 | `snapshot_changed` | The incomplete snapshot was not committed; sync the current snapshot once |
+| `snapshot_busy` | Other transfers hold the phone's retained snapshots; let them finish, then retry the requested update once |
 | `snapshot_preparation_failed` | Inspect the phone's preparation message; retry sync once after resolving it |
 | `snapshot_preparation_timed_out` | Keep the page open and check status; do not start an unbounded retry loop |
 | `record_chunk_hash_mismatch` or `record_hash_mismatch` | The cache was not replaced; retry the sync once |

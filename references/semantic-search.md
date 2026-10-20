@@ -121,6 +121,12 @@ Before searching, the module checks the source snapshot and record digest.
 Synchronizing an unchanged snapshot only refreshes its last-sync time and does not
 invalidate the vectors. Changed content requires another `index` command.
 
+An explicit request to refresh the user's Auday content means one `sync`, followed
+by one `index` update when a configured index already exists. Finish that update
+even if the phone reports additional arrivals after the captured snapshot. Do not
+keep synchronizing or indexing until the live archive stops changing, and do not
+download models or create a new semantic capability as a side effect of refresh.
+
 Queries use cosine similarity over the persistent vectors, with optional kind/date
 filters. A record appears once, using its highest-scoring chunk. Returned data
 contains a short source excerpt, record ID, title, kind, timestamp, state, character
