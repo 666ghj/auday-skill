@@ -50,8 +50,9 @@ public func linkParameters(password: String, peerToPeer: Bool) throws -> NWParam
     let tls = NWProtocolTLS.Options()
     sec_protocol_options_set_min_tls_protocol_version(tls.securityProtocolOptions, .TLSv12)
     sec_protocol_options_set_max_tls_protocol_version(tls.securityProtocolOptions, .TLSv12)
+    // Some SDKs import SSLCipherSuite constants as UInt32; the TLS enum uses UInt16.
     sec_protocol_options_append_tls_ciphersuite(tls.securityProtocolOptions,
-        tls_ciphersuite_t(rawValue: TLS_ECDHE_PSK_WITH_CHACHA20_POLY1305_SHA256)!)
+        tls_ciphersuite_t(rawValue: UInt16(TLS_ECDHE_PSK_WITH_CHACHA20_POLY1305_SHA256))!)
     let identity = Data("auday-workflow-link-v2".utf8)
     key.withUnsafeBytes { raw in identity.withUnsafeBytes { name in
         sec_protocol_options_add_pre_shared_key(tls.securityProtocolOptions,

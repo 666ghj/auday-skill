@@ -52,8 +52,14 @@ def main():
         begin = time.monotonic()
         result = subprocess.run(
             ["/bin/sh", str(package / "scripts/bootstrap.sh"), "--home", str(data), *arguments],
-            env=environment, stdout=subprocess.PIPE, text=True, check=True, timeout=1800,
+            env=environment, stdout=subprocess.PIPE, text=True, timeout=1800,
         )
+        if result.returncode:
+            print(result.stdout, file=sys.stderr)
+            setup_log = data / "runtime/audio/setup.log"
+            if setup_log.is_file():
+                print("\n".join(setup_log.read_text(errors="replace").splitlines()[-50:]), file=sys.stderr)
+            raise RuntimeError("clean_setup_command_failed: " + arguments[0])
         assert not sentinel.exists(), "A command borrowed a forbidden global tool"
         value = json.loads(result.stdout)
         steps.append({"command": list(arguments), "seconds": round(time.monotonic() - begin, 3)})
