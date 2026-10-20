@@ -15,6 +15,7 @@ import fcntl
 import sqlite3
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 
 HERE = Path(__file__).resolve().parent
@@ -107,7 +108,7 @@ class Auday:
         return result
 
     def sync(self):
-        status = self.request({"op": "status"})
+        status = self.prepared_status()
         snapshot = status["snapshot"]
         if (
             not isinstance(status.get("sourceDeviceID"), str)
@@ -157,19 +158,24 @@ class Auday:
                 "downloadedRecords": 0,
                 "audioDownloaded": False,
             }
-        record_rows, asset_rows = [], []
+        record_rows, asset_rows, staged_records = [], [], []
         for op, field, destination in [
             ("list", "records", record_rows),
             ("assets", "assets", asset_rows),
         ]:
             offset = 0
             while True:
-                reply = self.request({"op": op, "offset": offset, "snapshot": snapshot})
+                reply = self.request({
+                    "op": op, "offset": offset, "snapshot": snapshot,
+                    "allowRecordChunks": capabilities.get("chunkedRecords") is True,
+                })
                 if reply["snapshot"] != snapshot:
                     raise ValueError("snapshot_changed")
                 rows = reply[field]
                 if not isinstance(rows, list) or len(rows) > 100:
                     raise ValueError("invalid_page")
+                if op == "list":
+                    rows = [self.complete_record(row, snapshot, capabilities, staged_records) for row in rows]
                 destination.extend(rows)
                 if len(destination) > 1000000:
                     raise ValueError("library_too_large")
@@ -268,7 +274,87 @@ class Auday:
                 "INSERT OR REPLACE INTO metadata VALUES(?,?)",
                 [(k, json.dumps(v)) for k, v in meta.items()],
             )
+        for path in staged_records:
+            path.unlink(missing_ok=True)
         return {**meta, "changedRecords": changed, "audioDownloaded": False}
+
+    def prepared_status(self):
+        status = self.request({"op": "status"})
+        capabilities = status.get("capabilities", {})
+        if not isinstance(capabilities, dict):
+            raise ValueError("invalid_capabilities")
+        if capabilities.get("onDemandSnapshot") is not True:
+            return status  # Compatible with already-prepared older companions.
+        # One explicit attempt per sync. Polling does not restart a failed job
+        # or chase each new recording publication indefinitely.
+        deadline = time.monotonic() + 120
+        status = self.request({"op": "prepareSnapshot", "retry": True})
+        while status.get("snapshotState") == "preparing":
+            if time.monotonic() >= deadline:
+                raise ValueError("snapshot_preparation_timed_out")
+            time.sleep(0.25)
+            status = self.request({"op": "status"})
+        if status.get("snapshotState") == "failed":
+            raise ValueError("snapshot_preparation_failed")
+        if status.get("snapshotState") != "ready":
+            raise ValueError("snapshot_not_ready")
+        return status
+
+    def complete_record(self, row, snapshot, capabilities, staged_records):
+        if not isinstance(row, dict) or "recordTransfer" not in row:
+            return row
+        transfer = row["recordTransfer"]
+        if (
+            capabilities.get("chunkedRecords") is not True
+            or not isinstance(row.get("id"), str) or not row["id"]
+            or not isinstance(transfer, dict)
+            or transfer.get("encoding") != "json-utf8"
+            or type(transfer.get("size")) is not int
+            # A separate parser/resource bound, not the 2 MiB wire-frame limit.
+            or not 0 < transfer["size"] <= 128 * 1024 * 1024
+            or not isinstance(transfer.get("sha256"), str)
+            or not re.fullmatch("[0-9a-f]{64}", transfer["sha256"])
+        ):
+            raise ValueError("invalid_record_transfer")
+        size, digest = transfer["size"], transfer["sha256"]
+        directory = self.root / "record-staging"
+        directory.mkdir(mode=0o700, exist_ok=True)
+        partial = directory / (digest + ".partial")
+        offset = partial.stat().st_size if partial.exists() else 0
+        if offset > size:
+            raise ValueError("invalid_record_partial_size")
+        with partial.open("ab") as output:
+            os.chmod(partial, 0o600)
+            while offset < size:
+                length = min(262144, size - offset)
+                reply = self.request({
+                    "op": "recordChunk", "id": row["id"], "snapshot": snapshot,
+                    "offset": offset, "length": length,
+                })
+                if (
+                    reply.get("snapshot") != snapshot or reply.get("id") != row["id"]
+                    or type(reply.get("offset")) is not int or reply["offset"] != offset
+                    or type(reply.get("size")) is not int or reply["size"] != size
+                    or reply.get("sha256") != digest
+                ):
+                    raise ValueError("record_chunk_metadata_mismatch")
+                try:
+                    data = base64.b64decode(reply["data"], validate=True)
+                except (KeyError, ValueError, TypeError):
+                    raise ValueError("invalid_record_chunk") from None
+                if len(data) != length or hashlib.sha256(data).hexdigest() != reply.get("chunkSHA256"):
+                    raise ValueError("record_chunk_hash_mismatch")
+                output.write(data)
+                offset += len(data)
+        if sha(partial) != digest:
+            partial.replace(directory / (digest + ".corrupt"))
+            raise ValueError("record_hash_mismatch")
+        with partial.open(encoding="utf-8") as source:
+            complete = json.load(source)
+        if not isinstance(complete, dict) or complete.get("id") != row["id"] or "recordTransfer" in complete:
+            raise ValueError("record_identity_mismatch")
+        staged_records.append(partial)
+        return complete
 
     def search(self, query="", kind=None, date=None, limit=20, offset=0):
         if not 1 <= limit <= 100:

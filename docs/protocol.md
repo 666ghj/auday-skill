@@ -18,17 +18,39 @@ The local client stores secrets in macOS Keychain. It does not store them in the
 
 Each TLS connection carries one request and one response. A frame is a four-byte unsigned big-endian length followed by UTF-8 JSON. Maximum frame size is 2 MiB. The synthetic test listener bounds concurrent clients and connection lifetime, and listens only on loopback.
 
-Successful replies include `ok`, `schemaVersion: 1`, `snapshot`, and `sourceDeviceID`. Client diagnostic output also includes the negotiated TLS version and cipher.
+Successful replies include `ok`, `schemaVersion: 1`, `snapshot`, and `sourceDeviceID`. For an on-demand companion, control-plane status uses `null` for the snapshot and counts until preparation succeeds; this never means an empty archive. Client diagnostic output also includes the negotiated TLS version and cipher.
 
 | `op` | Request fields | Result |
 | --- | --- | --- |
-| `status` | none | Counts, categories, and read-only scope |
-| `list` | `offset`, `snapshot` | Up to 100 records and `nextOffset` |
+| `status` | none | Connection scope/capabilities and snapshot readiness; never starts preparation |
+| `prepareSnapshot` | optional `retry: true` | Start or join one on-demand preparation; return immediately |
+| `list` | `offset`, `snapshot`, optional `allowRecordChunks: true` | Up to 100 records or record-transfer descriptors and `nextOffset` |
 | `assets` | `offset`, `snapshot` | Up to 100 asset descriptors and `nextOffset`; no server paths |
-| `read` | `id`, optional `snapshot` | One record |
+| `read` | `id`, optional `snapshot`, optional `allowRecordChunks: true` | One inline record or record-transfer descriptor |
+| `recordChunk` | `id`, `offset`, `length`, `snapshot` | Base64 bytes of one complete JSON record, with size and hashes |
 | `audio` | `id`, `offset`, `length`, `snapshot` | Base64 chunk, offset, total size, full hash, and chunk hash |
 
 Audio chunks are at most 256 KiB. Unknown operations, including mutation requests, are rejected. Errors use `ok: false` and a bounded error identifier. The server accepts asset IDs, never arbitrary filesystem paths.
+
+### On-demand snapshots and large records
+
+Skill 0.3.0 supports `capabilities.onDemandSnapshot` and `capabilities.chunkedRecords`. The phone opens its authenticated listener without reading the archive. Pairing and `status` are control operations only. `sync` explicitly sends `prepareSnapshot`, then polls `status` while `snapshotState` is `preparing`. The other states are `idle`, `ready`, and `failed`. One sync starts at most one preparation attempt and has a bounded 120-second polling window, with individual request timeouts. A failure needs a new explicit sync/retry; polling cannot create a retry loop.
+
+The phone coalesces concurrent preparation requests. Source changes mark the existing snapshot non-current and do not automatically read the archive. A later explicit sync refreshes it. Closing access cancels preparation, revokes the snapshot and closes clients. A preparation failure leaves the connection available so the desktop can inspect status or request a retry.
+
+The 2 MiB frame limit applies to each message, not an entire logical record. A record that cannot fit inline is represented in `list`/`read` as:
+
+```json
+{"id":"reflection:example","recordTransfer":{"encoding":"json-utf8","size":3500000,"sha256":"<64 lowercase hex characters>"}}
+```
+
+Clients must opt in with `allowRecordChunks: true`. Otherwise a page containing a large record fails with `chunked_records_required`, rather than silently yielding incomplete text. `recordChunk` requires the exact snapshot identity and returns `id`, `offset`, `size`, `sha256`, `chunkSHA256`, and Base64 `data`. Its raw chunk length is at most 256 KiB. Byte ranges refer to the full UTF-8 JSON representation, so splitting a multibyte character between chunks is valid; decoding happens after reassembly.
+
+The client validates every chunk's identity, offset, length and hash, then the complete record hash and ID. Content-addressed partial files allow a subsequent sync to resume. Only fully verified records participate in the atomic cache replacement. Records keep their original identity and full payload, including all saved source citations. No truncation or artificial extra records is used. An unchanged snapshot still avoids all body downloads.
+
+The desktop JSON parser has a separate 128 MiB per-record resource bound. Malformed, inconsistent, or larger descriptors stop synchronization without replacing the last complete cache. This is not a claim of unlimited archive size. Existing eager companions remain compatible with Skill 0.3.0; on-demand companions advertise `minimumSkillVersion: "0.3.0"`.
+
+The separation of metadata and content follows the same engineering pattern as [LocalSend's preparation/transfer phases](https://github.com/localsend/protocol/blob/main/README.md#4-file-transfer-http-aka-upload-api). Snapshot-bound byte ranges follow the consistency principle of [HTTP Range and If-Range](https://www.rfc-editor.org/rfc/rfc9110.html#section-14). The Auday wire format remains its existing authenticated TLS JSON protocol; these references are design precedents, not claims of HTTP or LocalSend wire compatibility.
 
 ### On-demand phone audio
 

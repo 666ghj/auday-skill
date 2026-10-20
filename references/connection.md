@@ -55,6 +55,8 @@ Search combines whitespace-separated terms with AND, supports substring matching
 
 `sync` checks the snapshot identity first. An unchanged snapshot transfers no record bodies. A changed snapshot is paginated, validated, and committed atomically; this is not a persistent change-log protocol. Scope is part of snapshot identity. Text-only mode returns no audio catalogue and rejects audio requests.
 
+With Skill 0.3.0 and an on-demand companion, enabling access and pairing do not prepare the archive. `status --live` may show `snapshotState: "idle"` and null counts. Run `sync` to request preparation; it waits for that one attempt before reading the snapshot. Large text records are downloaded in verified chunks and reassembled completely. An interrupted transfer can resume on the next sync, while the last complete cache remains usable.
+
 `audio` resumes partial downloads, verifies every chunk and the final SHA-256, and returns a local file path plus asset metadata. The adjacent `.asset.json` preserves provenance and timeline mappings. Audio metadata does not imply that the audio is downloaded.
 
 With a compatible phone, the audio catalogue is lightweight: the `audio` command prepares only the requested recording before downloading it. Allow that bounded preparation to finish rather than fetching every asset to test a connection. If `sourceSnapshotCurrent` is false, the phone is still refreshing or could not refresh its saved-data snapshot; do not treat a recent `syncedAt` as proof that the source is current. Reopen access once if preparation has failed.
@@ -66,6 +68,9 @@ With a compatible phone, the audio catalogue is lightweight: the `audio` command
 | `not_paired` or missing Keychain secret | Start the local pairing prompt |
 | `awaiting_phone_or_wrong_password` | Check the active phone page, reachable LAN, local-network permission, and matching password; do not retry without a bound |
 | `snapshot_changed` | The incomplete snapshot was not committed; sync the current snapshot once |
+| `snapshot_preparation_failed` | Inspect the phone's preparation message; retry sync once after resolving it |
+| `snapshot_preparation_timed_out` | Keep the page open and check status; do not start an unbounded retry loop |
+| `record_chunk_hash_mismatch` or `record_hash_mismatch` | The cache was not replaced; retry the sync once |
 | `source_device_changed` | Use a new profile; do not merge unrelated device archives |
 | Interrupted audio | Repeat the same audio request to resume |
 | `audio_hash_mismatch` | A corrupt partial is retained separately; a new attempt starts clean |

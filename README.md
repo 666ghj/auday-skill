@@ -62,6 +62,8 @@ The native bridge uses a generated 16-character communication secret, HKDF-SHA25
 
 Pairing secrets are kept in macOS Keychain. The local cache lives in your user application-data directory, outside the source checkout. Text is synchronized first; audio is fetched when needed. Disabling access prevents future reads but cannot recall copies already downloaded to another device.
 
+With an on-demand companion, enabling access makes the phone available immediately; the archive is prepared only when the computer requests a sync. Large text records use resumable, verified chunks, keeping complete saved content and source references intact. Skill 0.3.0 also supports earlier companions that prepare their snapshots in advance.
+
 Local transport does not mean a cloud-based assistant performs inference locally. Only return the excerpts needed for the task. Fully local workflows also require local inference and local downstream tools.
 
 ## Development
