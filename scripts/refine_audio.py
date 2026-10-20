@@ -92,7 +92,9 @@ def run(args):
         raise ValueError("speaker_count_must_be_positive")
     if not 1 <= args.threads <= 32:
         raise ValueError("invalid_thread_count")
-    if not shutil.which("ffmpeg") or not shutil.which("whisper-cli"):
+    ffmpeg = str(getattr(args, "ffmpeg", None) or "ffmpeg")
+    whisper_cli = str(getattr(args, "whisper_cli", None) or "whisper-cli")
+    if not shutil.which(ffmpeg) or not shutil.which(whisper_cli):
         raise ValueError("ffmpeg_and_whisper_cli_required")
     out.mkdir(parents=True, exist_ok=False)
     started = time.perf_counter()
@@ -105,7 +107,7 @@ def run(args):
     report("Preparing 16 kHz mono audio")
     subprocess.run(
         [
-            "ffmpeg",
+            ffmpeg,
             "-v",
             "error",
             "-nostdin",
@@ -132,7 +134,7 @@ def run(args):
     with (out / "engine.log").open("w") as log:
         subprocess.run(
             [
-                "whisper-cli",
+                whisper_cli,
                 "-m",
                 str(model),
                 "-f",
@@ -292,6 +294,8 @@ def main():
     p.add_argument("--output", type=Path, required=True)
     p.add_argument("--language", default="auto")
     p.add_argument("--threads", type=int, default=4)
+    p.add_argument("--ffmpeg", type=Path, help="Explicit managed ffmpeg executable")
+    p.add_argument("--whisper-cli", type=Path, help="Explicit managed Whisper.cpp executable")
     p.add_argument("--asset-metadata", type=Path)
     p.add_argument(
         "--diarize",

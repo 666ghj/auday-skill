@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "whisperSource": {
+    "name": "whisper.cpp v1.7.6",
+    "revision": "a8d002cfd879315632a579e73f0148d06959de36",
+    "url": "https://codeload.github.com/ggml-org/whisper.cpp/tar.gz/a8d002cfd879315632a579e73f0148d06959de36",
+    "sha256": "7b17da903114ed45d82f48c030e3be6a5a8a279f884b2f733706dbb4e832fb6b",
+    "size": 7309272,
+    "license": "MIT",
+    "licenseURL": "https://github.com/ggml-org/whisper.cpp/blob/a8d002cfd879315632a579e73f0148d06959de36/LICENSE",
+    "directory": "whisper.cpp-a8d002cfd879315632a579e73f0148d06959de36"
+  },
+  "models": {
+    "small": {
+      "name": "Whisper small multilingual Q5_1",
+      "filename": "ggml-small-q5_1.bin",
+      "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small-q5_1.bin",
+      "sha256": "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb",
+      "size": 190085487,
+      "license": "MIT",
+      "licenseURL": "https://github.com/openai/whisper/blob/main/LICENSE",
+      "description": "Smaller download and memory footprint; inspect a representative sample for accuracy."
+    },
+    "turbo": {
+      "name": "Whisper large-v3-turbo multilingual Q5_0",
+      "filename": "ggml-large-v3-turbo-q5_0.bin",
+      "url": "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-turbo-q5_0.bin",
+      "sha256": "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
+      "size": 574041195,
+      "license": "MIT",
+      "licenseURL": "https://github.com/openai/whisper/blob/main/LICENSE",
+      "description": "Larger multilingual model; select when download, memory and task quality needs allow."
+    }
+  },
+  "diarization": {
+    "segmentation": {
+      "name": "sherpa-onnx public Pyannote 3.0 INT8 export",
+      "filename": "pyannote-segmentation-3.0.int8.onnx",
+      "url": "https://huggingface.co/csukuangfj/sherpa-onnx-pyannote-segmentation-3-0/resolve/9403a6902bb58e3d5ae8c7e77c3422de279db2e0/model.int8.onnx",
+      "sha256": "d582f4b4c6b48205de7e0643c57df0df5615a3c176189be3fc461e9d18827b5d",
+      "size": 1540506,
+      "license": "MIT",
+      "licenseURL": "https://huggingface.co/csukuangfj/sherpa-onnx-pyannote-segmentation-3-0/blob/9403a6902bb58e3d5ae8c7e77c3422de279db2e0/LICENSE",
+      "sourceDocumentation": "https://k2-fsa.github.io/sherpa/onnx/speaker-diarization/models.html"
+    },
+    "embedding": {
+      "name": "3D-Speaker CAMPPlus Chinese-English advanced",
+      "filename": "campplus-zh-en-advanced.onnx",
+      "url": "https://huggingface.co/csukuangfj/speaker-embedding-models/resolve/0743f301363dec56491a490f6d6cbc9d67f9a3bf/3dspeaker_speech_campplus_sv_zh_en_16k-common_advanced.onnx",
+      "sha256": "aa3cfc16963a10586a9393f5035d6d6b57e98d358b347f80c2a30bf4f00ceba2",
+      "size": 28281164,
+      "license": "Apache-2.0",
+      "licenseURL": "https://modelscope.cn/models/iic/speech_campplus_sv_zh_en_16k-common_advanced",
+      "sourceDocumentation": "https://github.com/k2-fsa/sherpa-onnx/releases/tag/speaker-recongition-models"
+    }
+  },
+  "runtimePackages": {
+    "lockfile": "uv.lock",
+    "python": "3.12.15",
+    "cmake": "3.31.6",
+    "imageio-ffmpeg": "0.6.0",
+    "sherpa-onnx": "1.13.5",
+    "notes": "Packages and wheel hashes are pinned in uv.lock. imageio-ffmpeg includes its own ffmpeg binary; no Homebrew or global ffmpeg is used. See installed wheel license files for the wrapper and bundled ffmpeg licenses."
+  }
+}
