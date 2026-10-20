@@ -84,6 +84,8 @@ Agent はキーワード検索に加え、概念や言い換えを探す[ロー�
 
 ## 開発と検証
 
+新しい Apple Silicon および Intel 実行環境での検証範囲と制約は、[初回セットアップの検証記録](docs/first-run-validation.md)を参照してください。
+
 ```sh
 sh tools/git/install-hooks.sh
 python3 tools/verify_public.py

@@ -84,6 +84,9 @@ Local transport does not mean a cloud-based assistant performs inference locally
 
 ## Development
 
+See the [first-run validation record](docs/first-run-validation.md) for clean
+Apple Silicon and Intel installation coverage and its limits.
+
 ```sh
 sh tools/git/install-hooks.sh
 python3 tools/verify_public.py

@@ -84,6 +84,8 @@ Agent 可以用关键词查找原词，也可以用[本地语义检索](referenc
 
 ## 开发与验证
 
+首次安装在全新 Apple Silicon 和 Intel 运行器上的验证范围与边界，见[首次安装验收记录](docs/first-run-validation.md)。
+
 ```sh
 sh tools/git/install-hooks.sh
 python3 tools/verify_public.py
