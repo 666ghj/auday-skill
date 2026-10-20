@@ -2,6 +2,12 @@
 
 Reviewed 2026-10-20. This is a decision guide for an agent, not a fixed language-to-model dispatcher. Choose for the recording's language or dialect, acoustic conditions, task, available Mac resources and useful models already installed. The entries below suggest what to try first; they are not universal accuracy rankings.
 
+## A first installation
+
+Do not assume the user has any of these engines. [First-run setup](first-run.md) provides an integrated, verified installation path for multilingual Whisper.cpp `small` (190.09 MB) or `turbo` (574.04 MB), with anonymous speaker diarization by default. For an ordinary first transcription, choose one of these based on language coverage and Mac resources, and have the agent complete its setup.
+
+The specialist candidates below can justify a different route when the task needs it; they are not all integrated into `setup --audio`. Install and verify only that selected engine, with its actual local model revision. Prefer a usable first result over downloading a catalog of overlapping models. A user who opts out of speaker labels must not receive speaker model downloads or related dependencies.
+
 ## Starting candidates
 
 | Recording | Starting candidates | When to choose or compare another route |

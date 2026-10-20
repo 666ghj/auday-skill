@@ -14,18 +14,22 @@ The iPhone and Mac exchange Auday data directly over an encrypted local protocol
 
 The bundled client runs on macOS and requires a compatible iPhone app with **Connect to your workflow / 接入你的工作流**. Installing this skill does not add that feature to the phone. If the page is missing, explain the companion requirement; do not claim access to recordings or fall back to extracting the phone's private container.
 
-Resolve scripts relative to this `SKILL.md`, using quoted absolute paths when invoking them:
+For a new installation, read [First-run setup](references/first-run.md). Start from an empty user environment: do not assume Python, Homebrew, command-line tools, models, pairing, or a synchronized library already exist. Resolve scripts relative to this `SKILL.md`, using quoted absolute paths when invoking them:
 
 ```text
-python3 <skill-root>/scripts/auday.py doctor
-python3 <skill-root>/scripts/auday.py status
+/bin/sh <skill-root>/scripts/bootstrap.sh check
+/bin/sh <skill-root>/scripts/bootstrap.sh doctor
+/bin/sh <skill-root>/scripts/bootstrap.sh setup
 ```
 
-The core client uses Python's standard library and compiles its bundled Swift bridge on first use. `doctor` reports prerequisites and companion protocol support. Audio analysis has separate optional dependencies.
+`check` needs no Python and downloads nothing. The bootstrap prepares a private `uv` and managed Python when needed; it does not require a global Python or Homebrew installation. `doctor` reports capability-specific prerequisites. Phone connection and the integrated audio build also need Xcode Command Line Tools; if missing, initiate the system installer and explain the remaining system steps.
+
+Recommend local semantic search once during first-run setup, describing its download and local processing. Let the user install it now or defer it, and record the choice. An explicit request to configure semantic search already authorizes that setup. Prepare transcription only when audio analysis is requested, choosing one appropriate model and including anonymous diarization unless the user opts out. Complete downloads, hash checks, configuration, and synthetic verification yourself; do not hand the user a terminal checklist. Report which capabilities are ready and what still needs the phone or a user-only system step.
 
 | Request | Workflow | Read when needed |
 | --- | --- | --- |
-| Install, connect, sync, or recover a connection | Use local discovery and a local password prompt | [Connection](references/connection.md) |
+| Install on a new computer or prepare a missing capability | Check the environment, offer semantic setup, prepare selected tools and verify them | [First-run setup](references/first-run.md) |
+| Connect, sync, or recover a connection | Use local discovery and a local password prompt | [Connection](references/connection.md) |
 | Find a discussion, prepare a brief, reflect, extract follow-ups | Check freshness, search narrowly, expand sources | [Context workflows](references/context.md) |
 | Search by meaning or prepare local semantic retrieval | Check the local model and index, then retrieve relevant passages | [Semantic search](references/semantic-search.md) |
 | Analyze recordings with Mac compute | Fetch selected audio and create independent local derivatives | [Audio analysis](references/audio.md) |
@@ -35,7 +39,7 @@ The core client uses Python's standard library and compiles its bundled Swift br
 ## Operating rules
 
 - Respect the phone's selected read-only scope: **all text** or **text and audio**. Neither permits writes, deletions, recording control, or generation on the phone. Ask for a scope change only when the task actually requires unavailable audio; never change it yourself.
-- Begin with cached status. Sync when the user needs current content. If the phone is unavailable, continue with useful cached information and state its `syncedAt` time. Do not label cached data as live.
+- After first-run setup, begin with cached status. A new user's missing pairing or empty library is an onboarding state, not a failed installation. Sync when the user needs current content. If the phone is unavailable, continue with useful cached information and state its `syncedAt` time. Do not label cached data as live.
 - Have the user enter the communication password through the local pairing prompt. Never put it in chat, a command argument, a screenshot, or a project file. Persist credentials only through the Keychain-backed flow.
 - Access to all text is not a reason to load the whole archive into the model. Search, paginate, and expand only relevant records. Preserve source IDs, timestamps, time zones, record states, and audio availability.
 - Choose keyword retrieval for exact words and semantic retrieval for concepts or paraphrases. If a configured semantic index is missing or stale, build it before the semantic query and show progress. Never present keyword matches as semantic results. For user-browsable files, use the readable export workflow.

@@ -8,10 +8,27 @@ statement is correct. Do not claim that SQLite alone supplies semantic embedding
 
 ## Local setup
 
-The semantic module uses Python's standard library, an existing local model, and a
-local llama.cpp runtime. It does not install packages, download weights, or call an
-external inference service. The phone is needed to synchronize new text; building
-and searching an already synchronized index work offline.
+For a new environment, use [first-run setup](first-run.md). Recommend this
+capability once, respect a saved deferral, and install it when selected or explicitly
+requested. The agent performs the preparation:
+
+```text
+/bin/sh <skill-root>/scripts/bootstrap.sh setup --semantic
+```
+
+Setup prepares the private base environment when needed, downloads and verifies
+the pinned model/runtime, saves configuration, and runs a synthetic verification.
+The model download is 333.59 MB and the runtime archives are about 11.2 MB; the
+base environment is about 40 MB when needed, with more space required after
+extraction. The official runtime requires macOS 13.3 or later. Explain the
+downloads and [Gemma terms](https://ai.google.dev/gemma/terms); an explicit request
+to prepare semantic search does not need another installation confirmation.
+
+The semantic query module itself uses Python's standard library, the configured
+local model, and local llama.cpp. It does not download during indexing/search or
+call an external inference service. The phone is needed to synchronize new text;
+building and searching an already synchronized index work offline. A successful
+setup check verifies the local capability, not a user's as-yet unsynchronized data.
 
 Use the complete **EmbeddingGemma 300M ordinary Q8_0** model:
 
@@ -33,20 +50,28 @@ the executable and adjacent dynamic libraries, because the executable may be a
 small launcher.
 
 Keep installed model/runtime assets in an ordinary local application-support
-directory, independently of development checkouts. The configuration accepts
-explicit local paths; no other Auday checkout is required. If assets are missing,
-explain the model size and license before obtaining them through the user's
-authorized setup flow.
+directory, independently of development checkouts. Setup manages those assets;
+the configuration also accepts explicit local paths for an existing verified
+installation. No other Auday checkout is required.
 
 ```text
-python3 <skill-root>/scripts/auday.py configure-semantic --model <local-model.gguf> --server <local-runtime/llama-server>
-python3 <skill-root>/scripts/auday.py index
-python3 <skill-root>/scripts/auday.py index-status
-python3 <skill-root>/scripts/auday.py search "a decision described in different words" --mode semantic --limit 10
-python3 <skill-root>/scripts/auday.py search "exact identifier" --mode keyword
+/bin/sh <skill-root>/scripts/bootstrap.sh index
+/bin/sh <skill-root>/scripts/bootstrap.sh index-status
+/bin/sh <skill-root>/scripts/bootstrap.sh search "a decision described in different words" --mode semantic --limit 10
+/bin/sh <skill-root>/scripts/bootstrap.sh search "exact identifier" --mode keyword
 ```
 
-The standalone module exposes the same implementation:
+For an existing verified model/runtime, configure their paths instead of downloading
+another copy:
+
+```text
+/bin/sh <skill-root>/scripts/bootstrap.sh configure-semantic --model <local-model.gguf> --server <local-runtime/llama-server>
+```
+
+The standalone module exposes the same implementation for manually managed
+environments that already provide a compatible `python3`. A bootstrap-managed
+installation should use the commands above; its private Python does not create a
+global `python3` command:
 
 ```text
 python3 <skill-root>/scripts/semantic_search.py --root <profile-directory> status

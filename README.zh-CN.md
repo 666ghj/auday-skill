@@ -18,17 +18,25 @@
 
 打开支持本地 Skill 的桌面 Agent，发送：
 
-> 请从 https://github.com/666ghj/auday-skill 为当前软件安装 Auday Skill，确认可用后，引导我连接手机上的 Auday。
+> 请从 https://github.com/666ghj/auday-skill 为当前软件安装 Auday Skill，完成首次配置，推荐准备本地语义检索，再引导我连接手机上的 Auday。转写工具等我需要时再安装。
 
 不同软件的 Skill 安装目录与导入方式可能不同。请让 Agent 安装到当前软件支持的位置，并确认软件能够发现和使用它。
 
-Agent 可以使用所在软件的原生 Skill 安装工具。仓库也提供行为明确的本地安装器：
+Agent 会使用所在软件的原生 Skill 安装工具，检查新电脑的环境并准备所需工具。你不必先自行安装 Python 或 Homebrew，也不用照着命令逐条操作。如果 macOS 需要系统密码或许可确认，Agent 会解释对应的系统步骤，完成后继续。
+
+首次使用时，Agent 会推荐准备**本地语义检索**：下载 333.59 MB 模型及约 11.2 MB 的运行程序压缩包；如需准备基础环境，还会另下载约 40 MB。解压文件和后续索引需要额外空间。你可以现在安装或稍后再装，选择会被保存；不安装也可以使用关键词检索。模型使用须遵循 [Gemma 条款](https://ai.google.dev/gemma/terms)。
+
+**转写按需准备。** 当你提出转写需求，Agent 会选择一套合适的模型，完成下载、校验、配置和运行验证。默认包含匿名说话人分段；直接说“不要说话人识别”，就会跳过相关模型和依赖。
+
+下载和准备过程中会展示当前阶段与实际进度。Agent 会分别说明哪些工具已经可用、手机是否已连接、首次同步是否完成。完整执行流程见[首次使用指南](references/first-run.md)。
+
+如果宿主软件没有原生安装工具，可以将安装包复制到它支持的 Skill 目录。已有 Python 的环境也可使用仓库附带的本地安装器：
 
 ```sh
 python3 tools/install.py --destination ~/.agents/skills/auday
 ```
 
-请使用当前软件支持的安装目录。安装器只复制 Skill 运行代码、参考资料、元数据、许可证与版本信息，不覆盖已有安装，也不修改宿主软件配置。如果软件没有发现新 Skill，可以刷新或重启。
+请使用当前软件支持的安装目录。这个安装器只复制 Skill 运行代码、参考资料、元数据、许可证与版本信息，不负责准备模型，不覆盖已有安装，也不修改宿主软件配置。如果软件没有发现新 Skill，可以刷新或重启。随后由 Agent 运行已安装的 `scripts/bootstrap.sh` 完成首次配置；这一步不要求电脑预先安装 Python。
 
 ## 连接手机
 
@@ -46,28 +54,29 @@ python3 tools/install.py --destination ~/.agents/skills/auday
 - 「回顾今天的记忆，把明确承诺和可能的后续事项分开。」
 - 「借助 Mac 分析这段录音，保留它与原始时间线的对应关系。」
 
-Agent 可以用关键词查找原词，也可以用[本地语义检索](references/semantic-search.md)查找概念和不同表述。语义检索需要配置本地 Embedding 模型并建立持久索引，不会把文字发送给外部 Embedding API。同步、建索引和音频分析时会展示当前阶段及实际处理数量。
+Agent 可以用关键词查找原词，也可以用[本地语义检索](references/semantic-search.md)查找概念和不同表述。如果首次配置时选择了语义检索，Agent 会在第一次同步后建立持久索引，不会把文字发送给外部 Embedding API。同步、建索引和音频分析时会展示当前阶段及实际处理数量。
 
 同步资料保存在硬盘上的 SQLite 数据库中，重启 Mac 后仍然存在。也可以让 Agent [导出可读文件](references/context.md#readable-files)，得到总目录和按日期整理的 Markdown，用文本编辑器直接浏览或全文查找。
 
 ## 运行要求
 
-- macOS 13 或更新版本、Python 3.9 或更新版本，以及带有 Swift 5.9 或更新版本的 Xcode Command Line Tools。
+- 基础客户端需要 macOS 13 或更新版本；指定的语义运行程序需要 macOS 13.3 或更新版本。
 - 带有「接入你的工作流」功能的 Auday iPhone 版本，iPhone 和 Mac 连接同一个 Wi-Fi。
-- 可选音频分析：`ffmpeg`、`whisper-cli`、本地模型权重，以及通过 `uv` 管理的 Python 3.11–3.13 说话人分析依赖。模型不随仓库提供，也不会自动下载。
-- 语义检索：指南中指定的完整 EmbeddingGemma 模型及兼容的本地 llama.cpp 运行程序；客户端与向量存储使用 Python 标准库。
+- 手机连接和内置音频工具构建需要带有 Swift 5.9 或更新版本的 Xcode Command Line Tools。Agent 会检查，缺失时可启动 Apple 安装器；需要你本人完成的系统对话框仍在本机处理。
+- Agent 会在需要时准备独立的 `uv` 和受管理的 Python，不假定已有全局 Python 或 Homebrew。
+- 模型不随安装包提供，由 Agent 在所选能力的配置流程中下载、校验哈希，并确认本地可运行。
 
 基本连接与上下文读取不需要 AI API Key、Auday 云端账号或云端中继。
 
 需要深入分析录音时，[语言策略指南](references/audio-language-routing.md)会指导 Agent 按日语、中文及方言、英语、韩语、法语、德语和多语言混合等情况选择方案；[Mac 音频指南](references/mac-audio-models.md)补充说话人分析与资源安排。Agent 可以根据实际录音调整工具，也可以复用已经适合你的方案。
 
-新转写默认区分匿名说话人。直接说“不要说话人识别”即可关闭，内置脚本使用 `--no-diarize` 执行该模式。匿名说话人标签不代表真实身份识别。
+内置转写配置可按电脑和任务选择多语言 Whisper `small` Q5_1（190.09 MB）或 large-v3-`turbo` Q5_0（574.04 MB），默认另配约 30 MB 的说话人模型；运行程序和依赖还需额外下载。Agent 只安装选定的一套并在之后复用，指南中的其他引擎需单独配置。匿名说话人标签不代表真实身份识别。
 
 ## 数据与隐私
 
 原生连接程序使用系统生成的 16 位通信密码、HKDF-SHA256，以及 TLS 1.2 ECDHE-PSK 与 ChaCha20-Poly1305。它不接受任意短口令，不跳过证书验证，也不会回退到明文传输。具体边界与现有限制见[协议文档](docs/protocol.md)。
 
-通信密码保存在 macOS Keychain 中。本地缓存位于用户的应用数据目录，不在源码仓库内。先同步文字，需要时再获取音频。关闭接入可以阻止后续读取，但无法收回其他设备已经下载的副本。
+通信密码保存在 macOS Keychain 中。文字数据库默认是硬盘上的持久文件 `~/Library/Application Support/AudayWorkflow/default/library.sqlite`，不在 Skill 安装目录内；模型、配置和索引也保存在本机。先同步文字，需要时再获取音频。关闭接入可以阻止后续读取，但无法收回其他设备已经下载的副本。
 
 在支持按需准备的手机版本中，开启接入后即可接受连接，电脑请求同步时才准备资料快照。较大的文字记录通过可续传、带校验的分块完整获取，保留已保存的内容与来源关联。当前 Skill 也兼容提前准备快照的旧版手机端。
 

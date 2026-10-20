@@ -13,19 +13,22 @@ Apple documents that the simulator does not implement local network privacy; ver
 
 ## Install and diagnose
 
-Resolve `<skill-root>` to the directory containing `SKILL.md`. Never assume another Auday checkout exists.
+For a new installation, complete [first-run setup](first-run.md) first. Resolve `<skill-root>` to the directory containing `SKILL.md`. Never assume another Auday checkout or a global Python installation exists. The agent runs these commands with quoted absolute paths:
 
 ```text
-python3 <skill-root>/scripts/auday.py doctor
-python3 <skill-root>/scripts/auday.py discover
+/bin/sh <skill-root>/scripts/bootstrap.sh check
+/bin/sh <skill-root>/scripts/bootstrap.sh doctor
+/bin/sh <skill-root>/scripts/bootstrap.sh discover
 ```
 
-The iPhone must have a compatible **Connect to your workflow** page. Discovery reports untrusted service names; the password handshake authenticates the peer. If there are several services, let the user identify the intended phone rather than guessing.
+`check` downloads nothing and runs without Python. Other commands can prepare the private base environment. Phone connection needs Xcode Command Line Tools with Swift 5.9 or later to compile the bridge. If missing, start `xcode-select --install`, explain required system actions, and check again after they finish. Do not claim pairing is ready while the bridge cannot compile.
+
+The iPhone must have a compatible **Connect to your workflow** page. A missing pairing on a fresh installation is expected. Discovery reports untrusted service names; the password handshake authenticates the peer. If there are several services, let the user identify the intended phone rather than guessing.
 
 ## Pair
 
 ```text
-python3 <skill-root>/scripts/auday.py pair-window --service <discovered-name>
+/bin/sh <skill-root>/scripts/bootstrap.sh pair-window --service <discovered-name>
 ```
 
 The user enters the password locally. `awaiting_local_password_input` is not a successful pairing. After the local prompt succeeds, run `status --live`, then `sync`.
@@ -39,17 +42,17 @@ The secret is shared by authorized clients. This version does not provide per-co
 ## Query and fetch
 
 ```text
-python3 <skill-root>/scripts/auday.py status
-python3 <skill-root>/scripts/auday.py status --live
-python3 <skill-root>/scripts/auday.py sync
-python3 <skill-root>/scripts/auday.py search "launch checklist" --limit 20
-python3 <skill-root>/scripts/auday.py search --kind memory --limit 30
-python3 <skill-root>/scripts/auday.py read <record-id>
-python3 <skill-root>/scripts/auday.py assets --limit 20
-python3 <skill-root>/scripts/auday.py audio <asset-id>
+/bin/sh <skill-root>/scripts/bootstrap.sh status
+/bin/sh <skill-root>/scripts/bootstrap.sh status --live
+/bin/sh <skill-root>/scripts/bootstrap.sh sync
+/bin/sh <skill-root>/scripts/bootstrap.sh search "launch checklist" --limit 20
+/bin/sh <skill-root>/scripts/bootstrap.sh search --kind memory --limit 30
+/bin/sh <skill-root>/scripts/bootstrap.sh read <record-id>
+/bin/sh <skill-root>/scripts/bootstrap.sh assets --limit 20
+/bin/sh <skill-root>/scripts/bootstrap.sh audio <asset-id>
 ```
 
-`--home` and `--profile` are global options placed before the command. Use separate profiles for separate phones. Passwords are never command arguments.
+`--home` and `--profile` are global options placed before the command, with `--home` first when both are provided. Use separate profiles for separate phones. Passwords are never command arguments. Existing integrations with an appropriate Python runtime may still invoke `auday.py` directly.
 
 The default keyword search combines whitespace-separated terms with AND and supports substring matching. It is distinct from the [local semantic mode](semantic-search.md), selected with `search --mode semantic` after preparing the local model and index. Keyword results carry `syncedAt`; use `nextOffset` with `--offset` to continue. `--date` matches a record's preserved ISO date, not a reconstructed date in the Mac's current time zone. Some derived records lack `start`, so browse by kind or follow their sources.
 

@@ -6,7 +6,7 @@ Reviewed 2026-10-20. Use this guide when selecting an engine or planning deeper 
 
 Start with [language and dialect routing](audio-language-routing.md) for Japanese, Chinese, English, Korean, French, German and mixed-language recordings. These are adaptable strategies; select for the actual speech and the user's quality/turnaround needs rather than assigning every user the same engine.
 
-The bundled `refine_audio.py` currently runs **Whisper.cpp**, with **sherpa-onnx** anonymous diarization enabled by default. Honor an explicit request to omit speaker labels with `--no-diarize`. Apply the same preference when selecting another route. The other routes below use separately installed local tools; their model IDs are not arguments supported by that runner.
+The bundled `refine_audio.py` currently runs **Whisper.cpp**, with **sherpa-onnx** anonymous diarization enabled by default. For a new Mac, [first-run setup](first-run.md) can install and verify multilingual `small` or `turbo` plus the required tools, without pre-existing global Python or Homebrew. Honor an explicit request to omit speaker labels with `--no-diarize` during both setup and transcription; that route skips speaker models and dependencies. Apply the same preference when selecting another route. The other routes below use separately installed local tools; their model IDs are not arguments supported by the integrated setup or runner.
 
 | Need | Recommended starting point | Why and what to verify |
 | --- | --- | --- |
@@ -41,7 +41,9 @@ Choose from the user's goals: a quick project brief can often use existing Auday
 
 ## Prepare a reproducible local environment
 
-Use an isolated, task-local `uv` project for each optional runtime. Keep MLX Audio and pyannote/PyTorch dependencies separate from the bundled client's frozen environment. Record the tested runtime version or commit and lock dependencies after the first working installation.
+For the integrated route, use `bootstrap.sh setup --audio --model small|turbo` with the model choice resolved to one value. The agent owns downloading, hash verification, configuration, and synthetic verification. `--no-diarize` excludes the optional diarization dependency group. Retain the saved working configuration for later tasks.
+
+For other engines, use an isolated, task-local `uv` project for each optional runtime. Keep MLX Audio and pyannote/PyTorch dependencies separate from the bundled client's frozen environment. Record the tested runtime version or commit and lock dependencies after the first working installation.
 
 Obtain only the selected model set. Record repository, immutable revision, quantization, file hashes and license. Community conversions are distinct artifacts from the original model release. For example, [Qwen3-ASR-1.7B-8bit](https://huggingface.co/mlx-community/Qwen3-ASR-1.7B-8bit) is an MLX Community conversion, not a different Qwen architecture.
 

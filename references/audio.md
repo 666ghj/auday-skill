@@ -13,31 +13,52 @@ Choose an engine using [language and dialect routing](audio-language-routing.md)
 
 ## Prepare
 
-Fetch the selected asset with `auday.py audio <asset-id>` and retain its `.asset.json`. If the phone permits text only, do not bypass that scope. Stored audio may contain enhancements, missing intervals, or omitted silence; analysis cannot recover sound that no longer exists.
+Fetch the selected asset with `bootstrap.sh audio <asset-id>` and retain its `.asset.json`. If the phone permits text only, do not bypass that scope. Stored audio may contain enhancements, missing intervals, or omitted silence; analysis cannot recover sound that no longer exists.
 
-Use `doctor` to check `ffmpeg`, `whisper-cli`, and `uv`. Transcription without speaker labels uses Python's standard library. The default diarization workflow also requires dependencies installed locally with:
+For a new Mac, follow [first-run setup](first-run.md); do not require the user to install command-line tools or models manually. Prepare transcription only when the task needs it. The integrated route installs one selected Whisper model, the required runtime/audio conversion tools, and anonymous diarization by default:
 
 ```text
-uv sync --project <skill-root>/scripts --frozen
+/bin/sh <skill-root>/scripts/bootstrap.sh doctor
+/bin/sh <skill-root>/scripts/bootstrap.sh setup --audio --model small
 ```
 
-Weights must already exist locally. The runner neither downloads models nor sends audio to a service. When obtaining new weights, use an approved source, pin a revision and hash, and honor the model's license and any required user acceptance. Do not silently download multiple large models.
+`small` downloads the 190.09 MB multilingual Whisper small Q5_1 model; `turbo` selects the 574.04 MB large-v3-turbo Q5_0 model. Choose one based on the machine, actual speech, and task. Speaker weights add about 30 MB; runtime archives and Python dependencies are additional. The Whisper.cpp build needs Xcode Command Line Tools; complete that system setup if missing before downloading large models. Explain the selected downloads and show progress. Setup verifies hashes, saves paths, and runs synthetic checks; it does not establish transcription quality on the user's recording.
+
+If the user declines speaker labels, use `setup --audio --model small --no-diarize` (or the selected `turbo` route). This skips speaker weights and packages. Keep that choice in the transcription command as well. Do not add an unwanted speaker installation merely to make default checks pass.
+
+For an existing manually managed environment, `doctor` checks `ffmpeg`, `whisper-cli`, and `uv`. The low-level runner accepts explicit local model paths. Its default diarization dependencies can be prepared with `uv sync --project <skill-root>/scripts --frozen --extra diarization`; the no-diarization runner needs only Python's standard library in addition to the native audio tools.
+
+The transcription runner does not download models or send audio to a service. Resolve missing assets through setup before inference. Other engines need their own pinned runtime/model installation and license handling; do not install every model mentioned in the guides.
 
 Select a model for the actual spoken language and task; a working language-specific model may be preferable to a general model. Whisper large-v3 and large-v3-turbo offer different quality/resource tradeoffs. Known single-language audio can use an explicit `--language` hint (`ja`, `zh`, `en`, `ko`, `fr`, `de`); use `auto` and inspect detection for uncertain or mixed audio. Preserve the original language unless translation is requested. Check a representative sample when choosing a new route; synthetic smoke-test success is not real-world quality evidence.
 
 ## Run
 
-Default transcription with anonymous diarization:
+After setup, use the saved configuration:
 
 ```text
-uv run --project <skill-root>/scripts --frozen python <skill-root>/scripts/refine_audio.py \
+/bin/sh <skill-root>/scripts/bootstrap.sh transcribe \
+  --audio <local-audio> --output <new-private-output-directory> --language auto
+```
+
+If the user explicitly declines speaker labels:
+
+```text
+/bin/sh <skill-root>/scripts/bootstrap.sh transcribe \
+  --audio <local-audio> --output <new-private-output-directory> --language auto --no-diarize
+```
+
+For manually configured tools, the low-level runner remains available. Default transcription with anonymous diarization:
+
+```text
+uv run --project <skill-root>/scripts --frozen --extra diarization python <skill-root>/scripts/refine_audio.py \
   --audio <local-audio> --model <local-ggml-model> \
   --output <new-private-output-directory> --language auto \
   --segmentation-model <local-pyannote-onnx> \
   --embedding-model <local-campplus-onnx>
 ```
 
-If the user explicitly declines speaker labels:
+The low-level speaker opt-out:
 
 ```text
 python3 <skill-root>/scripts/refine_audio.py \

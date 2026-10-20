@@ -1,13 +1,44 @@
-# Physical-device test checklist
+# First-run and physical-device test checklist
 
-Run this after installing the skill and a compatible Auday iPhone build. Keep source validation, simulator results, and physical-device observations separate.
+Validate the installed package, then test a compatible Auday iPhone build separately. Keep clean runtime setup, synthetic inference, simulator results, and physical-device observations distinct.
+
+## Clean runtime setup
+
+Use a newly installed copy of the skill and a new empty private data root. Do not seed it with models, package caches, a database, pairing, or configuration from a developer's working installation. Record OS/architecture and any system developer tools already present. An isolated data root on a developer Mac is not a factory-reset Mac.
+
+Limit command lookup to macOS system tools so Homebrew and other developer-installed executables cannot satisfy requirements accidentally:
+
+```text
+env PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+  /bin/sh <installed-skill>/scripts/bootstrap.sh --home <empty-data-root> check
+env PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+  /bin/sh <installed-skill>/scripts/bootstrap.sh --home <empty-data-root> doctor
+env PATH=/usr/bin:/bin:/usr/sbin:/sbin \
+  /bin/sh <installed-skill>/scripts/bootstrap.sh --home <empty-data-root> setup
+```
+
+Verify the following without reading personal Auday data:
+
+- `check` succeeds without Python, does not download, and reports capability prerequisites.
+- The first real setup obtains its private `uv` and managed Python under the isolated data root. It does not depend on a global Python, Homebrew, or pre-existing model paths.
+- A new installation shows the semantic recommendation and the expected unpaired/empty-library state.
+- Deferring semantic setup records the choice; another setup invocation respects it without downloading weights or repeating the recommendation. A later explicit semantic request still works.
+- Selected semantic setup downloads the pinned runtime/model, verifies hashes, saves usable local paths, and passes synthetic inference. Run again to check reuse of verified assets.
+- Selected audio setup downloads only one requested transcription model. The default route also prepares and tests anonymous diarization. In a separate empty root, `--no-diarize` succeeds without speaker weights or speaker-analysis packages.
+- A failed or interrupted download cannot become a ready configuration. Test corrupt bytes and incomplete artifacts with synthetic fixtures; a successful later attempt must verify its result.
+- The configured `transcribe` command uses installed assets, creates a new output directory, and does not trigger a surprise download.
+- Progress exposes download bytes and observable preparation stages while final stdout remains valid JSON. Unknown-duration inference stages must not invent a percentage.
+
+Use synthetic text and audio for these checks. Passing setup or a synthetic pipeline does not establish language accuracy, speaker quality on meetings, physical-phone connectivity, or performance on another Mac.
+
+For the missing Xcode Command Line Tools branch, verify a real fresh macOS account/VM or use an explicit prerequisite test fixture and label which was used. The agent should explain and launch the system installation path, then recheck; a mock cannot prove Apple's dialogs or installation completed. Check supported Intel and Apple Silicon routes separately before claiming both have been run. macOS 13 core behavior and the semantic runtime's macOS 13.3 minimum are separate boundaries.
 
 ## Before connecting
 
 - Record the skill version and phone app version in private test notes.
 - Confirm the phone has **Connect to your workflow**. If it does not, install a compatible build before testing; the skill cannot enable this remotely.
 - Use the same reachable LAN first. Disable no system security protections just to make discovery pass.
-- Run `doctor` from the installed skill directory, not from a development checkout.
+- Run `bootstrap.sh doctor` from the installed skill directory, not from a development checkout.
 - Keep real test notes, recordings, IP addresses, device IDs, credentials, and screenshots outside the repository.
 
 ## First connection
@@ -35,7 +66,7 @@ Test LAN first, then separately test Apple peer-to-peer discovery without a shar
 
 ## Optional audio analysis
 
-Start with a short user-authorized recording and already-approved local models. Save outputs separately. Confirm that the default route includes anonymous speaker turns, and that an explicit request to omit speakers uses `--no-diarize` without requiring speaker models or packages. Missing default-route dependencies must be reported before transcription starts, not silently skipped.
+Start with a short user-authorized recording. If local tools are missing, use the selected on-demand setup flow and verify it before processing the recording. Save outputs separately. Confirm that the default route includes anonymous speaker turns, and that an explicit request to omit speakers uses `--no-diarize` during both setup and transcription without requiring speaker models or packages. Missing default-route dependencies must be resolved before transcription starts, not silently skipped.
 
 Review names, timing, speaker boundaries, and difficult acoustic regions. Confirm that source audio and phone text remain unchanged. Do not call the result ground truth, claim identity recognition from anonymous clusters, or extrapolate synthetic smoke tests to all languages.
 
