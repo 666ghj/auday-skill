@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import signal
 import shutil
 import subprocess
@@ -75,8 +76,9 @@ def _native_environment(env):
     for name in list(env):
         if name.startswith("CMAKE_") or name in (
             "CPATH", "LIBRARY_PATH", "DYLD_LIBRARY_PATH", "CFLAGS", "CXXFLAGS",
-            "LDFLAGS", "SDKROOT", "CC", "CXX", "DEVELOPER_DIR",
-            "MACOSX_DEPLOYMENT_TARGET",
+            "CPPFLAGS", "ARCHFLAGS", "LDFLAGS", "SDKROOT", "CC", "CXX",
+            "DEVELOPER_DIR", "MACOSX_DEPLOYMENT_TARGET", "MAKEFLAGS", "MFLAGS",
+            "MAKEOVERRIDES",
         ):
             env.pop(name, None)
     env.update({"CC": "/usr/bin/clang", "CXX": "/usr/bin/clang++"})
@@ -108,7 +110,11 @@ def _command(command, log, env, stage, timeout=1800):
         except BaseException:
             if process.poll() is None:
                 os.killpg(process.pid, signal.SIGTERM)
-                process.wait()
+                try:
+                    process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGKILL)
+                    process.wait(timeout=5)
             raise
         if code:
             raise RuntimeError(
@@ -258,6 +264,13 @@ def setup_audio(root, model="small", diarize=True, *, uv_path=None):
     )
     if not verification.get("segments"):
         raise RuntimeError("audio_verification_produced_no_transcript")
+    sample_result = json.loads((output / "result.json").read_text())
+    words = set(re.findall(
+        r"[a-z]+",
+        " ".join(row["text"] for row in sample_result["segments"]).lower(),
+    ))
+    if not {"ask", "country"}.issubset(words):
+        raise RuntimeError("audio_verification_expected_sample_words_missing")
     if diarize and not verification.get("speakerCount"):
         raise RuntimeError("audio_verification_produced_no_speaker_turns")
     now = datetime.now(timezone.utc).isoformat()
@@ -268,6 +281,7 @@ def setup_audio(root, model="small", diarize=True, *, uv_path=None):
         "sample": "whisper.cpp/samples/jfk.wav",
         "segments": verification["segments"],
         "speakerCount": verification.get("speakerCount"),
+        "expectedSampleWordsPresent": ["ask", "country"],
         "output": str(output),
         "scope": "local public-sample smoke test; not transcription-quality benchmark",
     }

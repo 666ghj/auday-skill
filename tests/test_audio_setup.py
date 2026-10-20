@@ -33,6 +33,8 @@ class AudioSetupTests(unittest.TestCase):
         source.mkdir()
         (source / "CMakeLists.txt").touch()
         self.downloads = []
+        self.verification_reply = {"ok": True, "segments": 1, "speakerCount": 1}
+        self.verification_text = "Ask what you can do for your country."
 
         def download(url, destination, checksum, **kwargs):
             destination = Path(destination)
@@ -47,6 +49,15 @@ class AudioSetupTests(unittest.TestCase):
             download_asset=Mock(side_effect=download),
             extract_tar=Mock(),
         )
+
+        def run_transcription(config, audio, output, **kwargs):
+            output = Path(output)
+            output.mkdir(parents=True, exist_ok=True)
+            (output / "result.json").write_text(json.dumps({
+                "segments": [{"text": self.verification_text}],
+            }))
+            return self.verification_reply
+
         self.patches = [
             patch.dict(sys.modules, {"setup_runtime": self.shared}),
             patch.object(audio_setup.platform, "system", return_value="Darwin"),
@@ -55,8 +66,7 @@ class AudioSetupTests(unittest.TestCase):
             patch.object(audio_setup, "_command"),
             patch.object(audio_setup, "_probe_python",
                          side_effect=[str(self.ffmpeg), str(self.cmake)]),
-            patch.object(audio_setup, "_run_transcription",
-                         return_value={"ok": True, "segments": 1, "speakerCount": 1}),
+            patch.object(audio_setup, "_run_transcription", side_effect=run_transcription),
         ]
         self.mocks = [p.start() for p in self.patches]
         for p in self.patches:
@@ -96,11 +106,17 @@ class AudioSetupTests(unittest.TestCase):
         self.assertIn("turbo-q5_0", self.downloads[0][0])
 
     def test_failed_verification_does_not_advertise_ready_state(self):
-        self.mocks[6].return_value = {"ok": True, "segments": 0}
+        self.verification_reply = {"ok": True, "segments": 0}
         with self.assertRaisesRegex(RuntimeError, "no_transcript"):
             audio_setup.setup_audio(self.root, diarize=False)
         self.assertFalse((self.runtime / "config.json").exists())
         self.assertFalse(audio_setup.audio_status(self.root)["installed"])
+
+    def test_wrong_sample_words_do_not_advertise_ready_state(self):
+        self.verification_text = "Unrelated transcription"
+        with self.assertRaisesRegex(RuntimeError, "expected_sample_words_missing"):
+            audio_setup.setup_audio(self.root, diarize=False)
+        self.assertFalse((self.runtime / "config.json").exists())
 
     def test_missing_tools_fail_before_model_or_runtime_downloads(self):
         self.mocks[3].side_effect = RuntimeError("apple_command_line_tools_required")
@@ -127,7 +143,7 @@ class AudioSetupTests(unittest.TestCase):
             "CC": "/custom/clang", "CXX": "/custom/clang++",
             "CMAKE_TOOLCHAIN_FILE": "/custom/toolchain",
             "CMAKE_GENERATOR": "Ninja", "PATH": "/custom/bin",
-            "CPATH": "/custom/headers",
+            "CPATH": "/custom/headers", "MAKEFLAGS": "CC=/custom/clang",
         })
         self.assertEqual(env["CC"], "/usr/bin/clang")
         self.assertEqual(env["CXX"], "/usr/bin/clang++")
