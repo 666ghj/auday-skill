@@ -78,3 +78,5 @@ With a compatible phone, the audio catalogue is lightweight: the `audio` command
 | Phone offline | Use cached records and downloaded audio, stating the last successful sync time |
 
 The cache is private local data, not project source. Do not commit it or move it into a cloud-synced folder without the user's direction. A scope reduction does not silently delete existing files; offline copies cannot be remotely recalled.
+
+The default cache is a persistent SQLite file at `~/Library/Application Support/AudayWorkflow/<profile>/library.sqlite`, with `default` as the normal profile. It survives closing the agent or restarting the Mac; it is not an in-memory-only cache. Downloaded audio lives in that profile's `audio/` directory. Use the [readable export workflow](context.md#readable-files) when the user wants ordinary files they can open and search.

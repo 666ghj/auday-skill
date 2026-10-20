@@ -628,6 +628,9 @@ def main():
     read.add_argument("id")
     audio = commands.add_parser("audio")
     audio.add_argument("id")
+    export = commands.add_parser("export", help="Export cached text as readable daily Markdown files")
+    export.add_argument("--output", type=Path, required=True)
+    export.add_argument("--language", choices=["en", "zh-CN"], default="en")
     args = parser.parse_args()
     os.umask(0o077)
     if args.command == "doctor":
@@ -651,6 +654,13 @@ def main():
             + (["--peer-to-peer"] if args.peer_to_peer else []),
             check=True,
         )
+        return
+    if args.command == "export":
+        if not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", args.profile):
+            raise ValueError("invalid_profile_name")
+        from library_export import export_library
+        database = args.home.expanduser().resolve() / args.profile / "library.sqlite"
+        dump(export_library(database, args.output, args.language))
         return
     app = Auday(args.home, args.profile)
     try:
