@@ -10,9 +10,19 @@
   <strong>English</strong> &nbsp;·&nbsp; <a href="README.zh-CN.md">简体中文</a> &nbsp;·&nbsp; <a href="README.ja.md">日本語</a>
 </p>
 
-**Auday data travels directly between your iPhone and Mac over an encrypted local protocol, without passing through any cloud relay server.**
+**Auday is an all-day recording and AI memory app for Apple Watch and iPhone.** Record conversations and ideas on your watch, then revisit them on your iPhone through transcripts, Highlights, summaries, daily reflections, and memories.
 
-Use your desktop AI assistant to find a conversation, connect ideas across your memories, prepare a project brief, or explore recordings with your Mac's compute. Phone data stays read-only, with sources attached to the information you use.
+<p align="center">
+  <a href="https://apps.apple.com/app/id6814210373">
+    <img src="https://toolbox.marketingtools.apple.com/api/badges/download-on-the-app-store/black/en-us" alt="Download on the App Store" height="40">
+  </a>
+</p>
+
+<p align="center"><a href="https://auday.ai/">Visit auday.ai</a></p>
+
+This repository provides **Auday’s desktop companion skill**. It brings the context saved in the app to your desktop AI assistant for searching, writing, and deeper audio analysis on your Mac. Phone data stays read-only, with sources attached to the information you use.
+
+**Auday data travels directly between your iPhone and Mac over an encrypted local protocol, without passing through any cloud relay server.**
 
 ## Install through your desktop agent
 

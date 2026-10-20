@@ -10,9 +10,19 @@
   <a href="README.md">English</a> &nbsp;·&nbsp; <strong>简体中文</strong> &nbsp;·&nbsp; <a href="README.ja.md">日本語</a>
 </p>
 
-**iPhone 与 Mac 通过本地加密协议直接传输 Auday 数据，不经过任何云端服务器中转。**
+**Auday 是一款面向 Apple Watch 和 iPhone 的全天录音与 AI 记忆应用。** 用 Apple Watch 记录对话和灵感，在 iPhone 上查看转写、Highlights、摘要、每日反思和记忆，重新找到那些值得回顾的时刻。
 
-让你常用的桌面 AI 助手查找讨论、关联记忆、整理项目简报，或借助 Mac 的算力深入分析录音。手机数据始终只读，使用的信息保留来源。
+<p align="center">
+  <a href="https://apps.apple.com/app/id6814210373">
+    <img src="https://toolbox.marketingtools.apple.com/api/badges/download-on-the-app-store/black/zh-cn" alt="在 App Store 下载" height="40">
+  </a>
+</p>
+
+<p align="center"><a href="https://auday.ai/">访问官网 auday.ai</a></p>
+
+这个仓库提供 **Auday 的桌面端 Skill**，将 App 中已保存的资料接入你常用的 AI 助手，用于检索、写作，以及借助 Mac 算力进行更深入的音频分析。手机数据始终只读，使用的信息保留来源。
+
+**iPhone 与 Mac 通过本地加密协议直接传输 Auday 数据，不经过任何云端服务器中转。**
 
 ## 通过桌面 Agent 安装
 

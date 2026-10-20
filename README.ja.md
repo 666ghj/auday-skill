@@ -10,9 +10,19 @@
   <a href="README.md">English</a> &nbsp;·&nbsp; <a href="README.zh-CN.md">简体中文</a> &nbsp;·&nbsp; <strong>日本語</strong>
 </p>
 
-**Auday のデータは、iPhone と Mac の間でローカルの暗号化プロトコルを使って直接転送され、クラウドサーバーを経由しません。**
+**Auday は、Apple Watch と iPhone のための終日録音・AI メモリーアプリです。** Apple Watch で会話やアイデアを録音し、iPhone で文字起こし、ハイライト、要約、日々の振り返り、メモリーを通じて大切な場面を見返せます。
 
-いつものデスクトップ AI アシスタントで会話を探し、記憶どうしを結びつけ、プロジェクトの概要をまとめる。Mac の計算資源を使って録音を詳しく分析することもできます。iPhone のデータへのアクセスは常に読み取り専用で、利用する情報には出典が保持されます。
+<p align="center">
+  <a href="https://apps.apple.com/app/id6814210373">
+    <img src="https://toolbox.marketingtools.apple.com/api/badges/download-on-the-app-store/black/ja-jp" alt="App Store からダウンロード" height="40">
+  </a>
+</p>
+
+<p align="center"><a href="https://auday.ai/">公式サイト auday.ai</a></p>
+
+このリポジトリでは、**Auday のデスクトップ向け Skill** を提供しています。アプリに保存した情報を普段の AI アシスタントにつなぎ、検索や文章作成、Mac での詳しい音声分析に活用できます。iPhone のデータへのアクセスは常に読み取り専用で、利用する情報には出典が保持されます。
+
+**Auday のデータは、iPhone と Mac の間でローカルの暗号化プロトコルを使って直接転送され、クラウドサーバーを経由しません。**
 
 ## デスクトップ Agent からインストールする
 
