@@ -5,6 +5,7 @@ import argparse
 import base64
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -79,18 +80,18 @@ class Auday:
             raise ValueError("not_paired: run pair in a local terminal")
         return json.loads(path.read_text())
 
-    def request(self, payload):
+    def request(self, payload, timeout=15):
         if self.transport:
             result = self.transport(payload)
         else:
             config = self.config()
-            config.update(profile=self.keychain_account, request=payload)
+            config.update(profile=self.keychain_account, request=payload, timeout=max(1, timeout - 5))
             process = subprocess.run(
                 [str(bridge()), "request"],
                 input=json.dumps(config) + "\n",
                 text=True,
                 capture_output=True,
-                timeout=15,
+                timeout=timeout,
             )
             try:
                 result = json.loads(process.stdout)
@@ -128,6 +129,15 @@ class Auday:
         if status["access"] == "text-only-read-only" and status["assetCount"] != 0:
             raise ValueError("text_scope_contains_audio")
         previous = self.metadata()
+        capabilities = status.get("capabilities", {})
+        if not isinstance(capabilities, dict):
+            raise ValueError("invalid_capabilities")
+        source_freshness = {
+            "sourceSnapshotAt": status.get("snapshotCapturedAt"),
+            "sourceSnapshotCurrent": status.get("snapshotCurrent", True),
+        }
+        if type(source_freshness["sourceSnapshotCurrent"]) is not bool:
+            raise ValueError("invalid_snapshot_freshness")
         if (
             previous.get("snapshot") == snapshot
             and previous.get("recordCount") == status["recordCount"]
@@ -135,9 +145,11 @@ class Auday:
             and previous.get("access") == status["access"]
         ):
             with self.db:
-                self.db.execute(
+                self.db.executemany(
                     "INSERT OR REPLACE INTO metadata VALUES(?,?)",
-                    ("syncedAt", json.dumps(now())),
+                    [(key, json.dumps(value)) for key, value in {
+                        "syncedAt": now(), "capabilities": capabilities, **source_freshness
+                    }.items()],
                 )
             return {
                 **self.metadata(),
@@ -188,9 +200,17 @@ class Auday:
                 "memory",
             ):
                 raise ValueError("invalid_record_kind")
-            if status["access"] == "text-only-read-only" and "audioAssetID" in row:
+            if status["access"] == "text-only-read-only" and (
+                "audioAssetID" in row or "audioAssetIDs" in row
+            ):
                 raise ValueError("text_scope_contains_audio_reference")
         for row in asset_rows:
+            if row.get("preparation") == "on-demand":
+                if capabilities.get("onDemandAudio") is not True or not re.fullmatch(
+                    "[0-9a-f]{64}", str(row.get("contentRevision", ""))
+                ):
+                    raise ValueError("invalid_on_demand_asset")
+                continue
             if (
                 type(row.get("size")) is not int
                 or row["size"] < 0
@@ -210,7 +230,21 @@ class Auday:
             "access": status["access"],
             "recordCount": len(record_rows),
             "assetCount": len(asset_rows),
+            "capabilities": capabilities,
+            **source_freshness,
         }
+        old_assets = {
+            row[0]: json.loads(row[1])
+            for row in self.db.execute("SELECT id,body FROM assets")
+        }
+        asset_rows = [
+            {**old_assets[row["id"]], **row}
+            if row.get("preparation") == "on-demand"
+            and row["id"] in old_assets
+            and old_assets[row["id"]].get("contentRevision") == row["contentRevision"]
+            else row
+            for row in asset_rows
+        ]
         with self.db:
             self.db.execute("DELETE FROM records")
             self.db.execute("DELETE FROM assets")
@@ -299,6 +333,49 @@ class Auday:
             "syncedAt": self.metadata().get("syncedAt"),
         }
 
+    def prepare_audio(self, asset):
+        if self.metadata().get("access") != "text-and-audio-read-only":
+            raise ValueError("audio_access_denied")
+        if self.metadata().get("capabilities", {}).get("onDemandAudio") is not True:
+            raise ValueError("on_demand_audio_not_supported")
+        snapshot = self.metadata()["snapshot"]
+        reply = self.request(
+            {"op": "prepareAudio", "id": asset["id"], "snapshot": snapshot},
+            timeout=90,
+        )
+        ready = reply.get("asset")
+        if (
+            reply.get("snapshot") != snapshot
+            or not isinstance(ready, dict)
+            or ready.get("id") != asset["id"]
+            or type(ready.get("size")) is not int
+            or ready["size"] <= 0
+            or not re.fullmatch("[0-9a-f]{64}", str(ready.get("sha256", "")))
+            or ready.get("mime") not in ("audio/mp4", "audio/wav", "audio/x-wav", "audio/x-caf", "audio/aac")
+            or not isinstance(ready.get("timeline"), list)
+            or not ready["timeline"]
+        ):
+            raise ValueError("invalid_prepared_audio")
+        for span in ready["timeline"]:
+            if not isinstance(span, dict):
+                raise ValueError("invalid_prepared_audio_timeline")
+            start, end = span.get("fileStart"), span.get("fileEnd")
+            if (
+                type(start) not in (int, float) or type(end) not in (int, float)
+                or not math.isfinite(start) or not math.isfinite(end) or not 0 <= start < end
+            ):
+                raise ValueError("invalid_prepared_audio_timeline")
+            try:
+                recorded = datetime.fromisoformat(span["recordedStart"].replace("Z", "+00:00"))
+            except (KeyError, TypeError, ValueError, AttributeError):
+                raise ValueError("invalid_prepared_audio_timeline") from None
+            if recorded.tzinfo is None:
+                raise ValueError("invalid_prepared_audio_timeline")
+        asset = {**asset, **ready}
+        with self.db:
+            self.db.execute("UPDATE assets SET body=? WHERE id=?", (json.dumps(asset), asset["id"]))
+        return asset
+
     def audio(self, identity):
         if self.metadata().get("access") == "text-only-read-only":
             raise ValueError(
@@ -310,6 +387,23 @@ class Auday:
         if not row:
             raise ValueError("asset_not_in_synced_snapshot")
         asset = json.loads(row[0])
+        suffixes = {
+            "audio/mp4": ".m4a", "audio/wav": ".wav", "audio/x-wav": ".wav",
+            "audio/x-caf": ".caf", "audio/aac": ".aac",
+        }
+        # Identical bytes may belong to distinct recordings/timelines. Keep
+        # each on-demand asset's adjacent provenance file independent.
+        asset_suffix = (
+            "-" + hashlib.sha256(identity.encode()).hexdigest()
+            if asset.get("preparation") == "on-demand" else ""
+        )
+        if asset.get("preparation") == "on-demand":
+            saved_hash = str(asset.get("sha256", ""))
+            if re.fullmatch("[0-9a-f]{64}", saved_hash):
+                cached = self.root / "audio" / (saved_hash + asset_suffix + suffixes.get(asset.get("mime"), ".bin"))
+                if cached.is_file() and sha(cached) == saved_hash:
+                    return {"path": str(cached), "asset": asset, "cacheHit": True}
+            asset = self.prepare_audio(asset)
         expected = asset["sha256"]
         size = asset["size"]
         if (
@@ -320,28 +414,32 @@ class Auday:
             raise ValueError("invalid_asset_metadata")
         folder = self.root / "audio"
         folder.mkdir(mode=0o700, exist_ok=True)
-        suffix = {"audio/mp4": ".m4a", "audio/wav": ".wav", "audio/x-wav": ".wav"}.get(
-            asset.get("mime"), ".bin"
-        )
-        target = folder / (expected + suffix)
-        temporary = folder / (expected + ".partial")
+        suffix = suffixes.get(asset.get("mime"), ".bin")
+        target = folder / (expected + asset_suffix + suffix)
+        temporary = folder / (expected + asset_suffix + ".partial")
         if target.exists() and sha(target) == expected:
             return {"path": str(target), "asset": asset, "cacheHit": True}
         offset = temporary.stat().st_size if temporary.exists() else 0
         if offset > size:
             raise ValueError("partial_size_invalid")
+        preparation_retried = False
         with temporary.open("ab") as out:
             os.chmod(temporary, 0o600)
             while offset < size:
-                reply = self.request(
-                    {
-                        "op": "audio",
-                        "id": identity,
-                        "offset": offset,
-                        "length": min(262144, size - offset),
-                        "snapshot": self.metadata()["snapshot"],
-                    }
-                )
+                request = {
+                    "op": "audio", "id": identity, "offset": offset,
+                    "length": min(262144, size - offset), "snapshot": self.metadata()["snapshot"],
+                }
+                try:
+                    reply = self.request(request)
+                except ValueError as error:
+                    if str(error) != "audio_not_prepared" or preparation_retried or asset.get("preparation") != "on-demand":
+                        raise
+                    preparation_retried = True
+                    refreshed = self.prepare_audio(asset)
+                    if refreshed["sha256"] != expected or refreshed["size"] != size:
+                        raise ValueError("audio_changed: sync again before retrying") from None
+                    reply = self.request(request)
                 data = base64.b64decode(reply["data"], validate=True)
                 if (
                     reply["offset"] != offset

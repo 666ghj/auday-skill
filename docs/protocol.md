@@ -30,6 +30,16 @@ Successful replies include `ok`, `schemaVersion: 1`, `snapshot`, and `sourceDevi
 
 Audio chunks are at most 256 KiB. Unknown operations, including mutation requests, are rejected. Errors use `ok: false` and a bounded error identifier. The server accepts asset IDs, never arbitrary filesystem paths.
 
+### On-demand phone audio
+
+Skill 0.2.0 also accepts a server advertising `capabilities.onDemandAudio: true`. Its catalogue may return an asset with `preparation: "on-demand"` and a stable 64-character `contentRevision` instead of an eagerly prepared file hash and size. This revision describes the source version; it is not a download-integrity hash.
+
+Before downloading such an asset, the client sends `prepareAudio` with `id` and `snapshot`. The reply contains a ready `asset` with the same ID, `size`, `sha256`, `mime`, `duration`, and `timeline`. The phone resolves only that catalogue entry through its existing retained-audio reader. Preparation is bounded by a 90-second client timeout; it neither uploads audio nor prepares the entire recording archive. Range transfer and final hash verification then use the existing `audio` operation. Older eager catalogues remain supported.
+
+The phone maintains a bounded preparation cache. If an entry was evicted during transfer, the client may prepare it once more and continue only if its hash and size still match. Changed sources or snapshots stop the download for an explicit resync.
+
+When present, `snapshotCapturedAt` and `snapshotCurrent` describe the phone's source snapshot independently of the Mac's `syncedAt`. A false current flag must not be presented as a fresh complete archive.
+
 ## Scopes and snapshots
 
 `text-only-read-only` exposes transcripts, Highlights, summaries, reflections, and memories. It returns an empty audio catalogue, omits direct audio asset references from the text projection, and rejects the audio operation.

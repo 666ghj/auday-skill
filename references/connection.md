@@ -57,6 +57,8 @@ Search combines whitespace-separated terms with AND, supports substring matching
 
 `audio` resumes partial downloads, verifies every chunk and the final SHA-256, and returns a local file path plus asset metadata. The adjacent `.asset.json` preserves provenance and timeline mappings. Audio metadata does not imply that the audio is downloaded.
 
+With a compatible phone, the audio catalogue is lightweight: the `audio` command prepares only the requested recording before downloading it. Allow that bounded preparation to finish rather than fetching every asset to test a connection. If `sourceSnapshotCurrent` is false, the phone is still refreshing or could not refresh its saved-data snapshot; do not treat a recent `syncedAt` as proof that the source is current. Reopen access once if preparation has failed.
+
 ## Recovery
 
 | Result | Action |
