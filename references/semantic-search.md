@@ -161,12 +161,24 @@ quality.
 An optional real-model test uses eight new synthetic records and eight queries,
 covering both cross-language directions, mixed Chinese-English, and same-language
 paraphrases. It also checks long-text token budgets. Run it with existing local
-assets; it never downloads them:
+assets from a repository checkout; it never downloads them. Normal first-run
+setup already runs its own check through `setup --semantic`. For this optional
+developer test, use the shell and prepared interpreter for the current platform.
+
+macOS:
 
 ```sh
 AUDAY_SEMANTIC_MODEL="<local-model.gguf>" \
 AUDAY_SEMANTIC_SERVER="<local-runtime/llama-server>" \
 python3 -m unittest discover -s tests -p 'test_semantic_search.py' -v
+```
+
+Windows PowerShell (adjust the interpreter path if setup used a custom `--home`):
+
+```powershell
+$env:AUDAY_SEMANTIC_MODEL = "<local-model.gguf>"
+$env:AUDAY_SEMANTIC_SERVER = "<local-runtime>\llama-server.exe"
+& "$env:LOCALAPPDATA\AudayWorkflow\runtime\windows-link\venv\Scripts\python.exe" -m unittest discover -s tests -p test_semantic_search.py -v
 ```
 
 Passing this small integration fixture does not establish general multilingual

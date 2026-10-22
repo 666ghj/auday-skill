@@ -1,4 +1,6 @@
+from contextlib import closing
 import hashlib
+import os
 import json
 from pathlib import Path
 import sqlite3
@@ -52,20 +54,23 @@ class LibraryExportTests(unittest.TestCase):
         self.assertEqual(result["recordCount"], 3)
         self.assertEqual(result["dayCount"], 3)
         self.assertEqual(hashlib.sha256(self.database.read_bytes()).hexdigest(), before)
-        first = (self.destination / "days/2026-10-19.md").read_text()
+        first = (self.destination / "days/2026-10-19.md").read_text(encoding="utf-8")
         self.assertIn("项目 launch", first)
         self.assertIn("2026-10-19T23:30:00-07:00", first)
         self.assertNotIn("structured-payload-only", first)
-        second = (self.destination / "days/2026-10-20.md").read_text()
+        second = (self.destination / "days/2026-10-20.md").read_text(encoding="utf-8")
         self.assertIn("candidate", second)
         self.assertIn("synthetic-1", second)
         self.assertTrue((self.destination / "days/undated.md").is_file())
         self.assertEqual(events[-1]["completed"], 3)
-        manifest = json.loads((self.destination / "manifest.json").read_text())
+        manifest = json.loads((self.destination / "manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(sum(item["records"] for item in manifest["files"]), 3)
         self.assertFalse(manifest["structuredPayloadIncluded"])
         self.assertFalse(manifest["audioFilesIncluded"])
-        self.assertEqual((self.destination.stat().st_mode & 0o777), 0o700)
+        if os.name != "nt":
+            self.assertEqual((self.destination.stat().st_mode & 0o777), 0o700)
+        # Windows privacy uses the native protected DACL, separately exercised
+        # in test_platform_utils rather than POSIX stat mode emulation.
 
     def test_existing_export_and_symlink_are_never_overwritten(self):
         self.destination.mkdir()
@@ -73,7 +78,7 @@ class LibraryExportTests(unittest.TestCase):
         edited.write_text("user edits")
         with self.assertRaisesRegex(ValueError, "export_destination_exists"):
             export_library(self.database, self.destination)
-        self.assertEqual(edited.read_text(), "user edits")
+        self.assertEqual(edited.read_text(encoding="utf-8"), "user edits")
         link = self.root / "linked"
         link.symlink_to(self.root / "absent")
         with self.assertRaisesRegex(ValueError, "export_destination_exists"):
@@ -81,7 +86,7 @@ class LibraryExportTests(unittest.TestCase):
         self.assertTrue(link.is_symlink())
 
     def test_corrupt_record_leaves_no_partial_export(self):
-        with sqlite3.connect(self.database) as connection:
+        with closing(sqlite3.connect(self.database)) as connection, connection:
             connection.execute("UPDATE records SET body='invalid' WHERE id='synthetic-2'")
         with self.assertRaises(ValueError):
             export_library(self.database, self.destination)
@@ -98,9 +103,9 @@ class LibraryExportTests(unittest.TestCase):
             sys.executable, str(ROOT / "scripts/auday.py"),
             "--home", str(self.root / "cache"), "export",
             "--output", str(self.destination), "--language", "zh-CN",
-        ], capture_output=True, text=True, check=True)
+        ], capture_output=True, text=True, encoding="utf-8", check=True)
         self.assertEqual(json.loads(result.stdout)["recordCount"], 3)
-        self.assertIn("Auday 文字资料库", (self.destination / "index.md").read_text())
+        self.assertIn("Auday 文字资料库", (self.destination / "index.md").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":
