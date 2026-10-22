@@ -1,0 +1,50 @@
+name: Windows clean acceptance
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - 'codex/windows-support-*'
+  pull_request:
+    paths:
+      - 'scripts/**'
+      - 'tests/**'
+      - 'tools/**'
+      - '.github/workflows/**'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-clean-acceptance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  clean-install:
+    # Standard hosted VM, not a paid larger runner or a developer workstation.
+    runs-on: windows-2025
+    timeout-minutes: 60
+    env:
+      PYTHONUTF8: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+      - name: Bootstrap from an installed package with empty private caches
+        shell: pwsh
+        run: |
+          $output = Join-Path $env:RUNNER_TEMP 'auday-clean-验收 日本語'
+          python tools/check_clean_setup.py --output $output --audio full --audio-model small
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload synthetic acceptance report and setup logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: windows-clean-acceptance-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/auday-clean-验收 日本語/report.json
+            ${{ runner.temp }}/auday-clean-验收 日本語/command-log.txt
+            ${{ runner.temp }}/auday-clean-验收 日本語/fresh-data 缓存/runtime/audio/setup.log
+          if-no-files-found: warn
+          retention-days: 7

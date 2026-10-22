@@ -30,5 +30,38 @@ jobs:
           swift test --package-path tests/native-peer
       - name: Python, installation, and encrypted transport tests
         run: python3 -m unittest discover -s tests -v
+      - name: Use Python 3.13 for Python-to-Swift transport interoperability
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+      - name: Verify encrypted interoperability and Bonjour discovery
+        env:
+          AUDAY_TEST_MDNS: '1'
+        run: |
+          python3 -m pip install --require-hashes -r scripts/requirements-windows-link.txt
+          python3 -m unittest discover -s tests -p test_windows_link.py -v
+      - name: Whitespace check
+        run: git diff --check
+
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 20
+    env:
+      PYTHONUTF8: '1'
+      AUDAY_TEST_CREDENTIALS: '1'
+      AUDAY_TEST_MDNS: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.13'
+      - name: Install pinned Windows transport dependencies for tests
+        run: python -m pip install --require-hashes -r scripts/requirements-windows-link.txt
+      - name: Public source and history checks
+        run: python tools/verify_public.py --history
+      - name: Python, installation, encrypted transport, and native credentials tests
+        run: python -m unittest discover -s tests -v
       - name: Whitespace check
         run: git diff --check
