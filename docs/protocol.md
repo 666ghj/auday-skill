@@ -6,7 +6,7 @@ This document describes the unchanged iPhone protocol consumed by the macOS and 
 
 - Bonjour service: `_auday-link._tcp`, domain `local.`.
 - TLS PSK identity: `auday-workflow-link-v2`.
-- TLS version: 1.2 only; cipher: `TLS_ECDHE_PSK_WITH_CHACHA20_POLY1305_SHA256` (`0xccac`). No plaintext fallback, certificate-validation override, or early-data mode is used.
+- TLS version: 1.2 only; cipher: `TLS_ECDHE_PSK_WITH_CHACHA20_POLY1305_SHA256` (`0xccac`). No plaintext fallback or early-data mode is used. This suite authenticates peers with the pre-shared key and does not exchange X.509 certificates. The Windows SSL context disables certificate/hostname validation specifically for this sole PSK suite; it does not permit an unauthenticated certificate-based alternative.
 - The phone generates 16 uniformly selected symbols from `23456789ABCDEFGHJKLMNPQRSTUVWXYZ`. This is 80 bits of entropy. Group separators and case are normalized.
 - HKDF-SHA256 derives a 32-byte key using salt `auday-workflow-link-v2` and info `tls-psk`. Derivation does not add entropy or turn this into a password-authenticated key-exchange protocol.
 

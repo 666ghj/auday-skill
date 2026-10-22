@@ -77,7 +77,7 @@ Agent 可以用关键词查找原词，也可以用[本地语义检索](referenc
 
 ## 数据与隐私
 
-本地连接程序使用系统生成的 16 位通信密码、HKDF-SHA256，以及 TLS 1.2 ECDHE-PSK 与 ChaCha20-Poly1305。它不接受任意短口令，不跳过证书验证，也不会回退到明文传输。具体边界与现有限制见[协议文档](docs/protocol.md)。
+本地连接程序使用系统生成的 16 位通信密码、HKDF-SHA256，以及 TLS 1.2 ECDHE-PSK 与 ChaCha20-Poly1305。通信双方通过共享密钥认证；它不接受任意短口令，也不会回退到明文传输。具体边界与现有限制见[协议文档](docs/protocol.md)。
 
 通信密码保存在 Windows Credential Manager 或 macOS Keychain 中。文字数据库默认保存在以下持久文件中，不在 Skill 安装目录内：
 
