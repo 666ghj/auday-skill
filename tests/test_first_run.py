@@ -282,6 +282,22 @@ class FirstRunTests(unittest.TestCase):
         self.assertFalse(status["recommendSemantic"])
         self.assertIsNone(status["semantic"]["runtimeArchiveBytes"])
 
+    def test_managed_python_recognizes_only_private_python_or_its_exact_link_venv(self):
+        private = self.root / "runtime/python/cpython-private"
+        link_python = self.root / "runtime/windows-link/venv/Scripts/python.exe"
+        cases = (
+            (private / "python.exe", private, True),
+            (link_python, private, True),
+            (link_python, self.root / "global-python", False),
+            (self.root / "runtime/other/python.exe", private, False),
+        )
+        for executable, base_prefix, expected in cases:
+            with self.subTest(executable=executable, base_prefix=base_prefix), \
+                    patch.object(first_run.sys, "executable", str(executable)), \
+                    patch.object(first_run.sys, "base_prefix", str(base_prefix)), \
+                    patch.object(first_run, "venv_python", return_value=link_python):
+                self.assertEqual(first_run._python_managed_by_setup(self.root), expected)
+
     def test_audio_model_recommendation_uses_portable_memory_query(self):
         for memory, expected in ((0, "small"), (8 * 1024**3, "small"), (16 * 1024**3, "turbo")):
             with patch.object(first_run, "physical_memory_bytes", return_value=memory):

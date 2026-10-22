@@ -9,7 +9,7 @@ import sys
 import tempfile
 
 from progress import report
-from platform_utils import physical_memory_bytes, secure_directory
+from platform_utils import physical_memory_bytes, secure_directory, venv_python
 from setup_runtime import (
     command_line_tools_status, download_asset, file_hash,
     install_runtime, require_supported_system, runtime_asset,
@@ -46,6 +46,15 @@ def _save_bytes(path, value):
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+
+
+def _python_managed_by_setup(root):
+    private = (Path(root) / "runtime/python").resolve()
+    executable = Path(sys.executable).resolve()
+    if executable.is_relative_to(private):
+        return True
+    link_python = venv_python(Path(root) / "runtime/windows-link/venv").resolve()
+    return (executable == link_python and Path(sys.base_prefix).resolve().is_relative_to(private))
 
 
 def setup_status(root, profile="default"):
@@ -87,7 +96,7 @@ def setup_status(root, profile="default"):
     return {
         "ok": True, "core": {
             "pythonReady": True,
-            "pythonManagedBySetup": Path(sys.executable).resolve().is_relative_to(root / "runtime/python"),
+            "pythonManagedBySetup": _python_managed_by_setup(root),
             "connectionToolchain": command_line_tools_status(),
         },
         "semantic": semantic, "audio": audio,
