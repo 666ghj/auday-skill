@@ -189,6 +189,22 @@ def download_asset(url, destination, sha256, size=None, label="Downloading local
     return destination
 
 
+
+def _validated_tar_path(raw, *, link=False):
+    """Interpret POSIX tar names identically before writing on either host OS."""
+    name = PurePosixPath(raw)
+    if not raw or "\\" in raw or name.is_absolute() or (not link and ".." in name.parts):
+        raise ValueError("unsafe_archive_link" if link else "unsafe_archive_path")
+    for part in name.parts:
+        # A contained relative symlink may use parent components. Its final
+        # resolved location is checked against the extraction root below.
+        if link and part == "..":
+            continue
+        if (part.endswith((".", " ")) or re.search(r'[<>:"|?*\x00-\x1f]', part) or
+                re.fullmatch(r"(?i)(con|prn|aux|nul|com[1-9¹²³]|lpt[1-9¹²³])(?:\..*)?", part)):
+            raise ValueError("unsafe_archive_link" if link else "unsafe_archive_path")
+    return name
+
 def extract_tar(archive, destination):
     """Extract only ordinary files, directories and contained relative links."""
     destination = Path(destination).absolute()
@@ -200,8 +216,8 @@ def extract_tar(archive, destination):
             members = source.getmembers()
             targets = {}
             for member in members:
-                name = PurePosixPath(member.name)
-                if name.is_absolute() or ".." in name.parts:
+                name = _validated_tar_path(member.name)
+                if not name.parts and not member.isdir():
                     raise ValueError("unsafe_archive_path")
                 if not (member.isfile() or member.isdir() or member.issym() or member.islnk()):
                     raise ValueError("unsupported_archive_member")
@@ -210,9 +226,7 @@ def extract_tar(archive, destination):
                     raise ValueError("duplicate_archive_path")
                 targets[target] = member
                 if member.issym() or member.islnk():
-                    link = PurePosixPath(member.linkname)
-                    if link.is_absolute():
-                        raise ValueError("unsafe_archive_link")
+                    link = _validated_tar_path(member.linkname, link=True)
                     resolved = (target.parent if member.issym() else destination).joinpath(*link.parts).resolve()
                     if not resolved.is_relative_to(destination.resolve()):
                         raise ValueError("unsafe_archive_link")
@@ -275,7 +289,9 @@ def extract_zip(archive, destination):
                     raise ValueError("encrypted_archive_member")
                 # A backslash can be a path separator on Windows, never a literal
                 # filename; reject it instead of giving it host-dependent meaning.
-                raw = member.filename
+                # ZipInfo.filename normalizes backslashes on Windows and may
+                # truncate at NUL. Validate the decoded original header name.
+                raw = member.orig_filename
                 name = PurePosixPath(raw)
                 if (not raw or "\\" in raw or name.is_absolute() or
                         any(part in ("", ".", "..") for part in raw.rstrip("/").split("/"))):

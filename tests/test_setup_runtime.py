@@ -194,16 +194,25 @@ class RuntimeSetupTests(unittest.TestCase):
         cases = [
             [("../outside", "file", b"overwrite")],
             [(str(outside), "file", b"overwrite")],
+            [("C:/outside", "file", b"overwrite")],
+            [(r"C:\outside", "file", b"overwrite")],
+            [(r"\\server\share\outside", "file", b"overwrite")],
+            [("safe:payload", "file", b"alternate data stream")],
+            [("CON.txt", "file", b"device alias")],
+            [("trailing.", "file", b"filename alias")],
             [("runtime/link", "symlink", "../../outside")],
             [("runtime/link", "symlink", str(outside))],
+            [("runtime/link", "symlink", "C:/outside")],
+            [("runtime/link", "symlink", r"C:\outside")],
+            [("runtime/link", "hardlink", "safe:payload")],
             [("runtime/link", "hardlink", "../outside")],
             [("link", "symlink", "safe"), ("link/child", "file", b"written through link")],
             [("runtime/one", "symlink", "two"), ("runtime/two", "symlink", "one")],
         ]
-        for entries in cases:
+        for index, entries in enumerate(cases):
             with self.subTest(entries=entries):
                 archive = self.archive(entries)
-                destination = self.root / "unpacked"
+                destination = self.root / f"unpacked-{index}"
                 with self.assertRaises(ValueError):
                     runtime.extract_tar(archive, destination)
                 self.assertFalse(destination.exists())
@@ -302,6 +311,9 @@ class RuntimeSetupTests(unittest.TestCase):
         with zipfile.ZipFile(archive, "w") as output:
             for name, content, mode in entries:
                 member = zipfile.ZipInfo(name)
+                # Keep the malicious raw header name even on Windows, whose
+                # ZipInfo constructor otherwise converts backslashes to slashes.
+                member.filename = name
                 member.external_attr = mode << 16
                 output.writestr(member, content)
         return archive
@@ -320,21 +332,37 @@ class RuntimeSetupTests(unittest.TestCase):
     def test_zip_rejects_traversal_links_and_windows_filename_aliases(self):
         dangerous = ["../outside", "/outside", "C:/outside", "dir\\outside", "dir/../outside",
                      "tool.exe:payload", "CON.txt", "LPT1", "COM¹.txt", "trailing.", "trailing ",
-                     "dir//outside", "dir/./outside"]
+                     "dir//outside", "dir/./outside", "nul\x00payload"]
         cases = [[(name, b"unsafe", 0o100644)] for name in dangerous]
         cases.extend([
             [("link", b"outside", 0o120777)],
             [("tool.exe", b"first", 0o100644), ("TOOL.EXE", b"second", 0o100644)],
             [("dir", b"file parent", 0o100644), ("dir/child", b"child", 0o100644)],
         ])
-        for entries in cases:
+        for index, entries in enumerate(cases):
             with self.subTest(entries=entries):
                 archive = self.zip_archive(entries)
-                destination = self.root / "unpacked"
+                with zipfile.ZipFile(archive) as source:
+                    self.assertEqual([member.orig_filename for member in source.infolist()],
+                                     [entry[0] for entry in entries])
+                destination = self.root / f"unpacked-{index}"
                 with self.assertRaises(ValueError):
                     runtime.extract_zip(archive, destination)
                 self.assertFalse(destination.exists())
                 self.assertFalse((self.root / "outside").exists())
+
+    def test_zip_checks_original_name_before_windows_normalization(self):
+        archive = self.zip_archive([(r"dir\outside", b"unsafe", 0o100644)])
+        # Exercise Windows ZipInfo behavior on every CI host, so macOS also
+        # catches regressions that inspect only the already-normalized filename.
+        with patch.object(runtime.zipfile.os, "sep", "\\"):
+            with zipfile.ZipFile(archive) as source:
+                member = source.infolist()[0]
+                self.assertEqual(member.filename, "dir/outside")
+                self.assertEqual(member.orig_filename, r"dir\outside")
+            with self.assertRaisesRegex(ValueError, "unsafe_archive_path"):
+                runtime.extract_zip(archive, self.root / "unpacked")
+        self.assertFalse((self.root / "unpacked").exists())
 
     def test_windows_assets_are_distinct_and_keep_flat_zip_layout(self):
         for component in ("uv", "llama"):
