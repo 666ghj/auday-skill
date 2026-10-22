@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local Auday workflow CLI. Standard library only; macOS Network.framework bridge."""
+"""Local Auday workflow CLI with native macOS and Windows TLS-PSK transports."""
 
 import argparse
 import base64
@@ -11,7 +11,6 @@ from pathlib import Path
 import re
 import shutil
 import shlex
-import fcntl
 import sqlite3
 import subprocess
 import sys
@@ -21,9 +20,10 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from progress import report
+from platform_utils import default_home, is_windows, lock_file, unlock_file, secure_directory
 
 HERE = Path(__file__).resolve().parent
-DEFAULT_HOME = Path.home() / "Library/Application Support/AudayWorkflow"
+DEFAULT_HOME = default_home()
 _profile_locks = {}
 _profile_locks_guard = threading.Lock()
 
@@ -46,13 +46,13 @@ class ProfileOperationLock:
             self.thread_lock.acquire()
         try:
             if self.depth == 0:
-                self.stream = self.path.open("a")
+                self.stream = self.path.open("a+b")
                 os.chmod(self.path, 0o600)
                 try:
-                    fcntl.flock(self.stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    lock_file(self.stream, blocking=False)
                 except BlockingIOError:
                     report("Waiting for another operation on this local library", force=True)
-                    fcntl.flock(self.stream, fcntl.LOCK_EX)
+                    lock_file(self.stream)
             self.depth += 1
             return self
         except BaseException:
@@ -67,7 +67,7 @@ class ProfileOperationLock:
             self.depth -= 1
             if self.depth == 0:
                 try:
-                    fcntl.flock(self.stream, fcntl.LOCK_UN)
+                    unlock_file(self.stream)
                 finally:
                     self.stream.close()
                     self.stream = None
@@ -118,7 +118,7 @@ def dump(value):
 
 def atomic_json(path, value):
     temporary = path.with_suffix(".tmp")
-    with temporary.open("w") as out:
+    with temporary.open("w", encoding="utf-8") as out:
         json.dump(value, out, ensure_ascii=False, allow_nan=False)
     os.chmod(temporary, 0o600)
     temporary.replace(path)
@@ -136,8 +136,7 @@ class Auday:
         if not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", profile):
             raise ValueError("invalid_profile_name")
         self.root = Path(home).expanduser().resolve() / profile
-        self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        os.chmod(self.root, 0o700)
+        secure_directory(self.root)
         self.operation_lock = profile_operation_lock(self.root)
         self.profile = profile
         self.transport = transport
@@ -166,7 +165,7 @@ class Auday:
         path = self.root / "connection.json"
         if not path.exists():
             raise ValueError("not_paired: run pair in a local terminal")
-        return json.loads(path.read_text())
+        return json.loads(path.read_text(encoding="utf-8"))
 
     def request(self, payload, timeout=15):
         if self.snapshot_lease and payload.get("op") in (
@@ -181,10 +180,11 @@ class Auday:
             config = self.config()
             config.update(profile=self.keychain_account, request=payload, timeout=max(1, timeout - 5))
             process = subprocess.run(
-                [str(bridge()), "request"],
+                bridge_command() + ["request"],
                 input=json.dumps(config) + "\n",
                 text=True,
                 capture_output=True,
+                encoding="utf-8",
                 timeout=timeout,
             )
             try:
@@ -840,8 +840,8 @@ def bridge():
     build = package / ".build"
     build.mkdir(exist_ok=True)
     # Multiple agent processes can request data simultaneously; serialize compilation.
-    with (build / "auday-build.lock").open("a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with (build / "auday-build.lock").open("a+b") as lock:
+        lock_file(lock)
         output = subprocess.run(
             ["swift", "build", "--package-path", str(package), "--show-bin-path"],
             text=True,
@@ -862,7 +862,17 @@ def bridge():
         return binary
 
 
+def bridge_command():
+    if is_windows():
+        return [sys.executable, str(HERE / "windows_link.py")]
+    return [str(bridge())]
+
+
 def main():
+    if is_windows():
+        for stream in (sys.stdout, sys.stderr):
+            if hasattr(stream, "reconfigure"):
+                stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--home", type=Path, default=DEFAULT_HOME)
     parser.add_argument("--profile", default="default")
@@ -933,7 +943,7 @@ def main():
                 "version": (HERE.parent / "VERSION").read_text().strip(),
                 "companionProtocol": "auday-workflow-link-v2",
                 "phoneSupport": "compatible-build-required",
-                "liveConnectionSupported": sys.platform == "darwin",
+                "liveConnectionSupported": sys.platform in ("darwin", "win32"),
                 "capabilities": setup_status(args.home, args.profile),
             }
         )
@@ -963,7 +973,7 @@ def main():
         return
     if args.command == "discover":
         subprocess.run(
-            [str(bridge()), "discover"]
+            bridge_command() + ["discover"]
             + (["--peer-to-peer"] if args.peer_to_peer else []),
             check=True,
         )
@@ -998,7 +1008,7 @@ def main():
     try:
         if args.command in ["pair", "pair-window"]:
             if args.command == "pair-window":
-                bridge()
+                bridge_command()
                 command = [
                     sys.executable,
                     str(Path(__file__).resolve()),
@@ -1016,8 +1026,16 @@ def main():
                     command += ["--host", args.host, "--port", str(args.port)]
                 if args.peer_to_peer:
                     command += ["--peer-to-peer"]
+                if is_windows():
+                    # The new console owns hidden input; the assistant receives
+                    # only this pending status, never the communication secret.
+                    environment = dict(os.environ, PYTHONUTF8="1", PYTHONIOENCODING="utf-8")
+                    subprocess.Popen(command, creationflags=subprocess.CREATE_NEW_CONSOLE,
+                                     close_fds=True, env=environment)
+                    dump({"status": "awaiting_local_password_input"})
+                    return
                 launcher = app.root / "pair.command"
-                launcher.write_text("#!/bin/zsh\n" + shlex.join(command) + "\n")
+                launcher.write_text("#!/bin/zsh\n" + shlex.join(command) + "\n", encoding="utf-8")
                 os.chmod(launcher, 0o700)
                 subprocess.run(["open", str(launcher)], check=True)
                 dump(
@@ -1027,7 +1045,7 @@ def main():
                     }
                 )
                 return
-            command = [str(bridge()), "pair", "--profile", app.keychain_account]
+            command = bridge_command() + ["pair", "--profile", app.keychain_account]
             config = {}
             if args.service:
                 command += ["--service", args.service]

@@ -1,6 +1,9 @@
 """Exercise the real hidden terminal and Keychain flow with a disposable synthetic key."""
 
-import fcntl, json, os, pty, secrets, select, subprocess, sys, tempfile, termios, time, unittest, uuid
+import json, os, secrets, select, subprocess, sys, tempfile, time, unittest, uuid
+
+if sys.platform == "darwin":
+    import fcntl, pty, termios
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]

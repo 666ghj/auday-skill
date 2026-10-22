@@ -21,6 +21,8 @@ concurrency:
 
 jobs:
   clean-install:
+    # Same-repository support branches already verify this exact head on push.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository || !startsWith(github.head_ref, 'codex/windows-support-')
     # Standard hosted VM, not a paid larger runner or a developer workstation.
     runs-on: windows-2025
     timeout-minutes: 60
