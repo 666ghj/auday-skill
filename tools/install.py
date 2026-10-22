@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import sys
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,7 +22,7 @@ EXCLUDED = {
     ".private",
     ".private-work",
 }
-SUFFIXES = {".py", ".swift", ".toml", ".lock", ".md", ".yaml", ".yml", ".json", ".sh", ".tsv"}
+SUFFIXES = {".py", ".swift", ".toml", ".lock", ".md", ".yaml", ".yml", ".json", ".sh", ".ps1", ".tsv", ".txt"}
 
 
 def package_files(root=ROOT):
@@ -74,13 +75,17 @@ def install(destination, root=ROOT):
             )
             + "\n"
         )
-        # An empty directory claim makes a racing second install fail safely.
-        destination.mkdir()
-        try:
-            os.replace(temporary, destination)
-        except BaseException:
-            destination.rmdir()
-            raise
+        if sys.platform == "win32":
+            # Windows rename fails if a competing install claimed this path.
+            os.rename(temporary, destination)
+        else:
+            # An empty directory claim makes a racing second install fail safely.
+            destination.mkdir()
+            try:
+                os.replace(temporary, destination)
+            except BaseException:
+                destination.rmdir()
+                raise
         return {
             "installed": str(destination),
             "version": (root / "VERSION").read_text().strip(),
