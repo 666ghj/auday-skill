@@ -1,4 +1,6 @@
-# First-run validation for Skill 0.5.0
+# First-run validation records
+
+## Skill 0.5.0: macOS installation and inference
 
 Validated on 2026-10-20 from installed skill packages, without personal recordings,
 phone pairing, inherited model files, or a developer's existing Python environment.
@@ -70,3 +72,50 @@ setup, while leaving required passwords and system acceptance to the user.
 The tested startup and recovery contracts include retaining a requested semantic
 installation after interruption, preserving an earlier working configuration on
 failed verification, and rejecting unverified downloaded bytes.
+
+## Skill 0.6.0: Windows installation and inference
+
+Validated on 2026-10-22 at commit `06469248c3f0e131517cc8a247e189cb834965e3`.
+The [Windows clean acceptance job](https://github.com/666ghj/auday-skill/actions/runs/39795456300/job/119881572636)
+completed on a standard Windows x64 hosted runner (OS version `10.0.26100`).
+Its [synthetic report and setup logs](https://github.com/666ghj/auday-skill/actions/runs/39795456300/artifacts/12432218824)
+are retained temporarily by GitHub Actions.
+
+The harness installed the distributable package into a new directory, isolated
+the user home, caches, and temporary directories, and started it with Windows
+PowerShell 5.1. Installation, data, and temporary paths contained Chinese and
+Japanese characters. Failing `.cmd` and `.exe` sentinels verified that the skill
+did not borrow global developer tools. The harness itself used runner Python for
+packaging and assertions; this is an isolated installation on a hosted image,
+not a factory-reset Windows computer.
+
+The completed run verified:
+
+1. The check-only entrypoint made no downloads; base setup installed private uv,
+   Python 3.13.16, and the hashed connection dependencies without optional models.
+2. Deferring semantic setup persisted. Explicit setup downloaded and verified
+   EmbeddingGemma and the Windows CPU runtime, then passed three setup checks.
+3. Eight Chinese, English, and mixed-language retrieval queries passed, an
+   unchanged index was reused, and readable export preserved the source database.
+4. The pinned Whisper `small` model transcribed the public JFK sample with an
+   explicit speaker opt-out and with default anonymous diarization. The opt-out
+   installation contained no speaker models or speaker-analysis packages.
+5. Model hashes passed. A recursive native import audit confirmed that the
+   engines supplied their required Microsoft VC/OpenMP runtime DLLs locally.
+   No global-tool sentinel was executed.
+
+The same commit passed the [Windows regression suite](https://github.com/666ghj/auday-skill/actions/runs/39795456332/job/119881571912)
+(225 tests, 7 platform/optional skips), including native Credential Manager,
+directory permissions, process cleanup, Bonjour discovery, and the full synthetic
+encrypted workflow. The [macOS regression job](https://github.com/666ghj/auday-skill/actions/runs/39795456332/job/119881571966)
+passed both native test packages and 225 Python tests (19 platform/optional skips).
+A separate Python 3.13 pass ran 25 transport tests (1 Windows-only skip), checking
+the Windows client's TLS-PSK transport against the Apple Network framework peer.
+
+This evidence covers executable Windows x64 installation and synthetic local
+inference. It does not establish physical Windows-to-iPhone LAN pairing, firewall
+prompts, phone background behavior, or accuracy on personal recordings. The
+target desktop baseline is Windows 10/11 x64; this hosted run does not claim that
+every Windows release, ARM64 machine, or CPU has been tested. The optional Windows
+Whisper runtime requires AVX2, FMA, and F16C. Windows `turbo` was not exercised in
+this acceptance run; the recorded Windows inference preset is `small`.

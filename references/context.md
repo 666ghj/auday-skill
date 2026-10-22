@@ -2,7 +2,7 @@
 
 Choose the smallest useful evidence set for the task.
 
-Use the installed `scripts/bootstrap.sh` entrypoint so these workflows can reuse the private runtime prepared during [first-run setup](first-run.md), without depending on a global Python. On a new installation, connect and synchronize before treating an empty local library as evidence that the user has no records.
+Use the platform-specific `<auday>` bootstrap prefix defined in [first-run setup](first-run.md), so these workflows reuse the private runtime without depending on a global Python. Mac uses `bootstrap.sh`; Windows uses `bootstrap.ps1`. On a new installation, connect and synchronize before treating an empty local library as evidence that the user has no records.
 
 - **Find a statement or decision:** search relevant terms and times, read matching transcripts, then follow `sourceIDs` from summaries or memories. Distinguish exact speech from edits and generated summaries.
 - **Project brief or handoff:** collect decisions, reasons, commitments, dependencies, and unresolved questions. Assign an owner or deadline only when a source supports it.
@@ -28,7 +28,7 @@ Deliver in the user's requested format and language. Usually a concise conclusio
 When the user wants to browse or search their own files, export the cached snapshot:
 
 ```text
-/bin/sh <skill-root>/scripts/bootstrap.sh export --output <new-private-directory> --language en
+<auday> export --output <new-private-directory> --language en
 ```
 
 Use `--language zh-CN` for Chinese labels. The spoken/source text is preserved in its original language. This reads the local SQLite cache without contacting the phone. The output contains `index.md`, one Markdown file per saved record date in `days/`, and a manifest recording coverage and sync time. Users can open the folder in a text editor for folder-wide search.

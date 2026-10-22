@@ -1,55 +1,118 @@
-import base64, hashlib, importlib.util, json, os, select, secrets, shutil, socket, subprocess, sys, tempfile, time, unittest
+import base64
+from contextlib import ExitStack, contextmanager
+import json
+import os
 from pathlib import Path
+import queue
+import secrets
+import socket
+import ssl
+import subprocess
+import sys
+import tempfile
+import threading
+import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-from auday import Auday, bridge, sha
+import auday
+from auday import Auday, sha
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from make_fixture import make
 from native_peer import peer_binary
 
 
-@unittest.skipUnless(sys.platform == "darwin", "Native TLS bridge requires macOS")
+PYTHON_PEER = sys.platform == "win32" or os.environ.get("AUDAY_TEST_PYTHON_PEER") == "1"
+
+
+def client_command():
+    if PYTHON_PEER and sys.platform != "win32":
+        # Opt-in exercises the actual Windows client on a PSK-capable Mac
+        # Python without pretending that the host itself is Windows.
+        return [sys.executable, "-X", "utf8", str(ROOT / "scripts/windows_link.py")]
+    if sys.platform == "win32":
+        return auday.bridge_command()
+    return [str(auday.bridge())]
+
+
+def make_library(root):
+    # The shared fixture generator uses ordinary text files. Explicit UTF-8
+    # mode keeps its Chinese records portable to non-UTF-8 Windows locales.
+    subprocess.run(
+        [sys.executable, "-X", "utf8", str(ROOT / "tests/make_fixture.py"), str(root)],
+        check=True, capture_output=True, text=True, encoding="utf-8", timeout=30,
+    )
+    return json.loads((root / "library.json").read_text(encoding="utf-8"))
+
+
+@contextmanager
+def fixture_peer(root, password, access="text-and-audio-read-only", native_binary=None):
+    if PYTHON_PEER:
+        from fixture_library import FixtureLibrary
+        from python_peer import PythonPeer
+        library = FixtureLibrary(root, access=access)
+        with PythonPeer(password, response=library.respond) as server:
+            yield server.port
+        return
+
+    process = subprocess.Popen(
+        [str(native_binary)], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, text=True, encoding="utf-8",
+    )
+    ready = queue.Queue()
+
+    def read_ready():
+        try:
+            ready.put(process.stdout.readline())
+        except Exception as error:
+            ready.put(error)
+
+    reader = threading.Thread(target=read_ready, daemon=True)
+    try:
+        process.stdin.write(json.dumps({"password": password, "root": str(root), "access": access}) + "\n")
+        process.stdin.flush()
+        reader.start()
+        try:
+            line = ready.get(timeout=15)
+        except queue.Empty:
+            raise RuntimeError("synthetic listener did not start") from None
+        if isinstance(line, Exception) or not line:
+            raise RuntimeError("synthetic listener failed to start")
+        yield json.loads(line)["port"]
+    finally:
+        if process.poll() is None:
+            process.terminate()
+        if reader.ident is not None:
+            reader.join(timeout=5)
+        process.communicate(timeout=5)
+
+
+@unittest.skipUnless(sys.platform == "darwin" or PYTHON_PEER, "Workflow runtime supports macOS and Windows")
 class WorkflowTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.binary = bridge()
-        cls.peer = peer_binary()
-        cls.temp = tempfile.TemporaryDirectory(prefix="auday-synthetic-")
-        cls.root = Path(cls.temp.name)
-        cls.library = make(cls.root / "source")
+        if PYTHON_PEER and not (
+            getattr(ssl, "HAS_PSK", False) and hasattr(ssl.SSLContext, "set_psk_server_callback")
+        ):
+            raise RuntimeError("Windows workflow tests require Python 3.13+ with TLS-PSK")
+        cls.resources = ExitStack()
+        cls.addClassCleanup(cls.resources.close)
+        cls.command = client_command()
+        cls.peer = None if PYTHON_PEER else peer_binary()
+        cls.root = Path(cls.resources.enter_context(tempfile.TemporaryDirectory(prefix="auday-synthetic-")))
+        cls.library = make_library(cls.root / "source")
         # Exercise a real TLS response larger than 1 MiB, not only tiny
         # metadata pages or mocked chunk replies.
         cls.library["records"][214]["payload"] = {"syntheticPadding": "x" * 1500000}
         (cls.root / "source" / "library.json").write_text(
-            json.dumps(cls.library, ensure_ascii=False, indent=2)
+            json.dumps(cls.library, ensure_ascii=False, indent=2), encoding="utf-8",
         )
         cls.password = "".join(
             secrets.choice("23456789ABCDEFGHJKLMNPQRSTUVWXYZ") for _ in range(16)
         )
-        cls.server = subprocess.Popen(
-            [str(cls.peer)],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
+        cls.port = cls.resources.enter_context(
+            fixture_peer(cls.root / "source", cls.password, native_binary=cls.peer)
         )
-        cls.server.stdin.write(
-            json.dumps({"password": cls.password, "root": str(cls.root / "source")})
-            + "\n"
-        )
-        cls.server.stdin.flush()
-        if not select.select([cls.server.stdout], [], [], 15)[0]:
-            raise RuntimeError("listener did not start")
-        cls.ready = json.loads(cls.server.stdout.readline())
-        cls.port = cls.ready["port"]
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.server.terminate()
-        cls.server.communicate(timeout=5)
-        cls.temp.cleanup()
 
     def setUp(self):
         self.cache = tempfile.TemporaryDirectory(prefix="auday-cache-")
@@ -59,19 +122,20 @@ class WorkflowTests(unittest.TestCase):
         self.app.close()
         self.cache.cleanup()
 
-    def raw_request(self, payload, password=None):
+    def raw_request(self, payload, password=None, port=None):
         data = {
             "host": "127.0.0.1",
-            "port": self.port,
+            "port": self.port if port is None else port,
             "password": password or self.password,
             "request": payload,
             "timeout": 2,
         }
         result = subprocess.run(
-            [str(self.binary), "request"],
+            [*self.command, "request"],
             input=json.dumps(data) + "\n",
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=5,
         )
         return json.loads(result.stdout)
@@ -125,12 +189,16 @@ class WorkflowTests(unittest.TestCase):
 
     def test_desktop_client_has_no_server_command(self):
         result = subprocess.run(
-            [str(self.binary), "serve"], capture_output=True, text=True, timeout=5
+            [*self.command, "serve"], capture_output=True, text=True,
+            encoding="utf-8", timeout=5,
         )
         self.assertNotEqual(result.returncode, 0)
-        self.assertEqual(
-            json.loads(result.stdout)["error"], "unsupported_client_command"
-        )
+        if PYTHON_PEER:
+            self.assertEqual(result.stdout, "")
+            self.assertIn("invalid choice", result.stderr)
+            self.assertIn("serve", result.stderr)
+        else:
+            self.assertEqual(json.loads(result.stdout)["error"], "unsupported_client_command")
 
     def test_all_pages_atomic_and_idempotent(self):
         first = self.app.sync()
@@ -254,7 +322,8 @@ class WorkflowTests(unittest.TestCase):
         for path in self.app.root.rglob("*"):
             if path.is_file():
                 self.assertNotIn(self.password.encode(), path.read_bytes())
-        self.assertEqual(self.app.root.stat().st_mode & 0o777, 0o700)
+        if os.name != "nt":
+            self.assertEqual(self.app.root.stat().st_mode & 0o777, 0o700)
 
     def test_wrong_snapshot_and_no_path_leak(self):
         self.assertEqual(
@@ -270,44 +339,11 @@ class WorkflowTests(unittest.TestCase):
         self.app.sync()
         downloaded = Path(self.app.audio("audio-demo")["path"])
         self.assertTrue(downloaded.exists())
-        server = subprocess.Popen(
-            [str(self.peer)],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        server.stdin.write(
-            json.dumps(
-                {
-                    "root": str(self.root / "source"),
-                    "password": self.password,
-                    "access": "text-only-read-only",
-                }
-            )
-            + "\n"
-        )
-        server.stdin.flush()
-        port = json.loads(server.stdout.readline())["port"]
+        with fixture_peer(self.root / "source", self.password,
+                          access="text-only-read-only", native_binary=self.peer) as port:
+            def text_transport(payload):
+                return self.raw_request(payload, port=port)
 
-        def text_transport(payload):
-            args = {
-                "host": "127.0.0.1",
-                "port": port,
-                "password": self.password,
-                "request": payload,
-                "timeout": 2,
-            }
-            r = subprocess.run(
-                [str(self.binary), "request"],
-                input=json.dumps(args) + "\n",
-                text=True,
-                capture_output=True,
-                timeout=5,
-            )
-            return json.loads(r.stdout)
-
-        try:
             self.assertEqual(
                 text_transport(
                     {
@@ -334,9 +370,6 @@ class WorkflowTests(unittest.TestCase):
                 text_transport({"op": "delete", "id": "memory-1"})["error"],
                 "read_only_operation_not_supported",
             )
-        finally:
-            server.terminate()
-            server.communicate(timeout=5)
 
     def test_malformed_status_does_not_replace_cache(self):
         self.app.sync()
@@ -362,21 +395,28 @@ class WorkflowTests(unittest.TestCase):
         sys.path.insert(0, str(ROOT / "tools"))
         from install import install
 
-        destination = Path(self.cache.name) / "installed agent" / "auday"
+        destination = Path(self.cache.name) / "installed agent 合成" / "auday"
         install(destination)
         code = """
 import json,subprocess,sys
 from pathlib import Path
 sys.path.insert(0,str(Path(sys.argv[1])/'scripts'))
-from auday import Auday,bridge
-config=json.loads(sys.stdin.readline());binary=str(bridge())
+import auday
+from auday import Auday
+config=json.loads(sys.stdin.readline())
+if sys.argv[3]=='python' and sys.platform!='win32':
+    command=[sys.executable,'-X','utf8',str(Path(sys.argv[1])/'scripts/windows_link.py')]
+elif sys.platform=='win32':
+    command=auday.bridge_command()
+else:
+    command=[str(auday.bridge())]
 def request(payload):
-    result=subprocess.run([binary,'request'],input=json.dumps({**config,'request':payload})+'\\n',capture_output=True,text=True,timeout=15)
+    result=subprocess.run([*command,'request'],input=json.dumps({**config,'request':payload})+'\\n',capture_output=True,text=True,encoding='utf-8',timeout=15)
     return json.loads(result.stdout)
 app=Auday(sys.argv[2],transport=request)
 try:
     status=app.sync();record=app.read('highlight-1');audio=app.audio('audio-demo')
-    print(json.dumps({'records':status['recordCount'],'sourceIDs':record['record']['sourceIDs'],'audioBytes':Path(audio['path']).stat().st_size}))
+    print(json.dumps({'records':status['recordCount'],'sourceIDs':record['record']['sourceIDs'],'audioBytes':Path(audio['path']).stat().st_size,'runtimeRoot':str(Path(auday.__file__).resolve().parents[1]),'title':record['record']['title']},ensure_ascii=False))
 finally:app.close()
 """
         config = {
@@ -388,15 +428,19 @@ finally:app.close()
         result = subprocess.run(
             [
                 sys.executable,
+                "-X",
+                "utf8",
                 "-c",
                 code,
                 str(destination),
                 str(Path(self.cache.name) / "isolated-cache"),
+                "python" if PYTHON_PEER else "native",
             ],
             input=json.dumps(config) + "\n",
             cwd=self.cache.name,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=180,
         )
         self.assertEqual(result.returncode, 0, result.stderr[-1000:])
@@ -404,6 +448,12 @@ finally:app.close()
         self.assertEqual(summary["records"], 221)
         self.assertEqual(summary["sourceIDs"], ["transcript-000"])
         self.assertEqual(summary["audioBytes"], self.library["assets"][0]["size"])
+        self.assertEqual(Path(summary["runtimeRoot"]), destination.resolve())
+        self.assertEqual(summary["title"], "发布检查安排")
+        if not PYTHON_PEER:
+            self.assertTrue((destination / "scripts/link/.build").is_dir())
+        else:
+            self.assertFalse((destination / "scripts/link/.build").exists())
         self.assertNotIn(self.password, result.stdout + result.stderr)
 
 

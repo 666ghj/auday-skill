@@ -1,21 +1,23 @@
-"""On-demand, isolated Mac audio setup. No model download occurs on import."""
+"""On-demand, isolated macOS and Windows audio setup; no import-time downloads."""
 
+import ctypes
 import json
 import os
 from pathlib import Path
 import platform
 import re
-import signal
 import shutil
 import subprocess
+import tarfile
 import tempfile
 import time
 from datetime import datetime, timezone
 
 from progress import report
+from platform_utils import start_process, stop_process, venv_python
 
 SCRIPT_ROOT = Path(__file__).resolve().parent
-MANIFEST = json.loads((SCRIPT_ROOT / "audio-assets.json").read_text())
+MANIFEST = json.loads((SCRIPT_ROOT / "audio-assets.json").read_text(encoding="utf-8"))
 
 
 def _paths(root):
@@ -27,7 +29,7 @@ def _paths(root):
 def _read_config(root):
     _, runtime, _ = _paths(root)
     try:
-        result = json.loads((runtime / "config.json").read_text())
+        result = json.loads((runtime / "config.json").read_text(encoding="utf-8"))
         if not isinstance(result, dict) or result.get("schemaVersion") != 1:
             return {}
         path_fields = (
@@ -90,11 +92,11 @@ def _native_environment(env):
 
 def _command(command, log, env, stage, timeout=1800):
     report(stage, force=True)
-    with Path(log).open("a") as output:
+    with Path(log).open("a", encoding="utf-8") as output:
         started = time.monotonic()
-        process = subprocess.Popen(
+        process = start_process(
             [str(value) for value in command], env=env, stdout=output,
-            stderr=subprocess.STDOUT, start_new_session=True,
+            stderr=subprocess.STDOUT,
         )
         try:
             while True:
@@ -108,13 +110,7 @@ def _command(command, log, env, stage, timeout=1800):
                     # Native builds and uv cannot expose an honest fixed total.
                     report(stage + " (still running)", force=True)
         except BaseException:
-            if process.poll() is None:
-                os.killpg(process.pid, signal.SIGTERM)
-                try:
-                    process.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    os.killpg(process.pid, signal.SIGKILL)
-                    process.wait(timeout=5)
+            stop_process(process)
             raise
         if code:
             raise RuntimeError(
@@ -125,7 +121,7 @@ def _command(command, log, env, stage, timeout=1800):
 
 def _probe_python(python, program, env):
     return subprocess.check_output(
-        [str(python), "-I", "-c", program], text=True, env=env,
+        [str(python), "-I", "-X", "utf8", "-c", program], text=True, encoding="utf-8", env=env,
         stderr=subprocess.PIPE, timeout=120,
     ).strip()
 
@@ -149,6 +145,22 @@ def _check_build_tools(env):
     return clang
 
 
+def _check_windows_audio_cpu():
+    """Check the OS-enabled AVX2 feature before downloading the pinned CPU engine."""
+    # Official feature ID 40 is PF_AVX2_INSTRUCTIONS_AVAILABLE:
+    # https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-isprocessorfeaturepresent
+    # The upstream x64 build also requires FMA/F16C (recorded in the manifest).
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    supports = kernel.IsProcessorFeaturePresent
+    supports.argtypes = [ctypes.c_uint]
+    supports.restype = ctypes.c_int
+    if not supports(40):
+        raise RuntimeError(
+            "windows_audio_requires_avx2_cpu; this local audio engine also requires "
+            "FMA and F16C; connection, text synchronization and export remain available"
+        )
+
+
 def _download_model(asset, directory, label):
     from setup_runtime import download_asset
     return download_asset(
@@ -157,59 +169,18 @@ def _download_model(asset, directory, label):
     )
 
 
-def setup_audio(root, model="small", diarize=True, *, uv_path=None):
-    """Install one selected ASR model and optional default speaker models.
-
-    Caller obtains the user's model choice/authorization. This never installs
-    Homebrew, writes system Python, or silently selects a different model.
-    """
-    if platform.system() != "Darwin" or platform.machine() not in ("arm64", "x86_64"):
-        raise RuntimeError("managed_audio_requires_macos_arm64_or_x86_64")
-    if model not in MANIFEST["models"]:
-        raise ValueError("audio_model_must_be_small_or_turbo")
-    from setup_runtime import download_asset, ensure_uv, extract_tar, managed_env
-
-    os.umask(0o077)
-    root, runtime, models = _paths(root)
-    runtime.mkdir(parents=True, exist_ok=True)
-    models.mkdir(parents=True, exist_ok=True)
-    log = runtime / "setup.log"
-    env = managed_env(root)
-    native_env = _native_environment(env)
-    # Fail before downloading large assets if the Apple compiler is absent.
-    _check_build_tools(native_env)
-    uv = Path(uv_path) if uv_path else ensure_uv(root)
-    venv = runtime / "venv"
-    env["UV_PROJECT_ENVIRONMENT"] = str(venv)
-    old = _read_config(root)
-    # Opting out of a new job never deletes an already installed speaker setup.
-    install_speakers = bool(diarize or old.get("diarizationVerifiedAt"))
-    sync = [
-        uv, "sync", "--project", SCRIPT_ROOT, "--frozen", "--no-config",
-        "--python", "3.12.15", "--managed-python",
-    ]
-    if install_speakers:
-        sync += ["--extra", "diarization"]
-    _command(sync, log, env, "Installing isolated audio runtime")
-    python = venv / "bin/python"
-    # imageio-ffmpeg has a fixed bundled binary; ignore its environment override.
-    ffmpeg = Path(_probe_python(
-        python,
-        "import imageio_ffmpeg,pathlib; "
-        "p=pathlib.Path(imageio_ffmpeg.__file__).parent/'binaries'; "
-        "b=list(p.glob('ffmpeg-macos*')); "
-        "assert len(b)==1,'bundled_ffmpeg_missing'; print(b[0])",
-        env,
-    ))
-    ffmpeg.chmod(ffmpeg.stat().st_mode | 0o100)
-    cmake = Path(_probe_python(
-        python, "import cmake; print(cmake.CMAKE_BIN_DIR + '/cmake')", env,
-    ))
+def _ensure_source(runtime, *, windows=False):
+    """The pinned archive also supplies the public verification sample and license."""
+    from setup_runtime import download_asset, extract_tar
     source_asset = MANIFEST["whisperSource"]
     source = runtime / source_asset["directory"]
-    build = runtime / ("build-" + source_asset["revision"])
-    whisper = build / "bin" / "whisper-cli"
-    if not (source / "CMakeLists.txt").is_file():
+    required = ("LICENSE", "samples/jfk.wav") if windows else (
+        "CMakeLists.txt", "LICENSE", "samples/jfk.wav"
+    )
+    if source.exists() or source.is_symlink():
+        if source.is_symlink() or not all((source / name).is_file() for name in required):
+            raise ValueError("existing_audio_source_incomplete; preserve it and choose a new setup root")
+    else:
         archive = download_asset(
             source_asset["url"], runtime / "whisper-source.tar.gz",
             source_asset["sha256"], size=source_asset["size"],
@@ -218,8 +189,36 @@ def setup_audio(root, model="small", diarize=True, *, uv_path=None):
         # Use a fresh destination; source trees are never overlaid.
         with tempfile.TemporaryDirectory(prefix="extract-", dir=runtime) as tmp:
             unpacked = Path(tmp) / "contents"
-            extract_tar(archive, unpacked)
+            if windows:
+                # Only the license and sample are needed with the prebuilt CLI.
+                # Unrelated source paths can exceed legacy Windows path limits.
+                selected = unpacked / source_asset["directory"]
+                with tarfile.open(archive, "r:gz") as tar:
+                    for name in required:
+                        archive_name = source_asset["directory"] + "/" + name
+                        matches = [member for member in tar.getmembers()
+                                   if member.name == archive_name]
+                        if (len(matches) != 1 or not matches[0].isfile() or
+                                not 0 < matches[0].size <= 32 * 1024**2):
+                            raise ValueError("invalid_whisper_verification_asset")
+                        destination = selected / name
+                        destination.parent.mkdir(parents=True, exist_ok=True)
+                        with tar.extractfile(matches[0]) as content, destination.open("xb") as output:
+                            shutil.copyfileobj(content, output)
+            else:
+                extract_tar(archive, unpacked)
             shutil.move(str(unpacked / source_asset["directory"]), str(source))
+    return source
+
+
+def _prepare_mac_whisper(runtime, source, python, env, log):
+    source_asset = MANIFEST["whisperSource"]
+    native_env = _native_environment(env)
+    cmake = Path(_probe_python(
+        python, "import cmake; print(cmake.CMAKE_BIN_DIR + '/cmake')", env,
+    ))
+    build = runtime / ("build-" + source_asset["revision"])
+    whisper = build / "bin" / "whisper-cli"
     if not whisper.is_file():
         _command(
             [cmake, "-S", source, "-B", build, "-G", "Unix Makefiles",
@@ -236,6 +235,119 @@ def setup_audio(root, model="small", diarize=True, *, uv_path=None):
              "--target", "whisper-cli", "-j", str(min(4, os.cpu_count() or 2))],
             log, native_env, "Building local transcription engine",
         )
+    return whisper
+
+
+def _prepare_windows_whisper(runtime, source):
+    """Install official CPU binaries and app-local release DLLs into a fresh tree."""
+    from setup_runtime import download_asset, extract_zip, file_hash
+    from windows_crt import ensure_windows_crt
+    engine = MANIFEST["whisperWindows"]
+    redist = MANIFEST["windowsRuntime"]
+    destination = runtime / engine["directory"]
+    executable = destination / engine["executable"]
+    files = [*engine["files"], *redist["files"]]
+
+    def verified(directory):
+        for item in files:
+            path = directory / "Release" / item["filename"]
+            if (not path.is_file() or path.is_symlink() or
+                    path.stat().st_size != item["size"] or
+                    file_hash(path) != item["sha256"]):
+                return False
+        return True
+
+    if destination.exists() or destination.is_symlink():
+        if not destination.is_symlink() and verified(destination):
+            return executable
+        raise ValueError("existing_audio_engine_incomplete; preserve it and choose a new setup root")
+    engine_archive = download_asset(
+        engine["url"], runtime / (engine["sha256"] + ".zip"),
+        engine["sha256"], size=engine["size"],
+        label="Downloading verified Windows transcription engine",
+    )
+    with tempfile.TemporaryDirectory(prefix="engine-", dir=runtime) as temporary:
+        temporary = Path(temporary)
+        stage = temporary / "install"
+        release = stage / "Release"
+        release.mkdir(parents=True)
+        unpacked = extract_zip(engine_archive, temporary / "engine")
+        for item in engine["files"]:
+            shutil.copyfile(unpacked / item["member"], release / item["filename"])
+        # The same verified app-local CRT also supports semantic search without
+        # installing audio; OpenMP is needed only by this Whisper CPU build.
+        ensure_windows_crt(runtime.parent.parent, release, openmp=True)
+        if not verified(stage):
+            raise ValueError("windows_audio_engine_file_verification_failed")
+        shutil.copyfile(source / "LICENSE", stage / "WHISPER-LICENSE")
+        (stage / "provenance.json").write_text(json.dumps({
+            "whisperArchiveSHA256": engine["sha256"],
+            "runtimeArchiveSHA256": redist["sha256"],
+            "runtimeLicenseURL": redist["licenseURL"],
+        }, indent=2) + "\n", encoding="utf-8")
+        stage.replace(destination)
+    return executable
+
+
+def setup_audio(root, model="small", diarize=True, *, uv_path=None):
+    """Install one selected ASR model and optional default speaker models.
+
+    Caller obtains the user's model choice/authorization. This never installs
+    Homebrew, writes system Python, or silently selects a different model.
+    """
+    windows = platform.system() == "Windows"
+    supported = (windows and platform.machine().lower() in ("amd64", "x86_64")) or (
+        platform.system() == "Darwin" and platform.machine() in ("arm64", "x86_64")
+    )
+    if not supported:
+        raise RuntimeError("managed_audio_requires_macos_or_windows_x64")
+    if model not in MANIFEST["models"]:
+        raise ValueError("audio_model_must_be_small_or_turbo")
+    if windows:
+        _check_windows_audio_cpu()
+    from setup_runtime import ensure_uv, managed_env, managed_python_version
+
+    os.umask(0o077)
+    root, runtime, models = _paths(root)
+    runtime.mkdir(parents=True, exist_ok=True)
+    models.mkdir(parents=True, exist_ok=True)
+    log = runtime / "setup.log"
+    env = managed_env(root)
+    # Windows uses a prebuilt engine; only macOS needs Apple compiler tools.
+    if not windows:
+        _check_build_tools(_native_environment(env))
+    uv = Path(uv_path) if uv_path else ensure_uv(root)
+    venv = runtime / "venv"
+    env["UV_PROJECT_ENVIRONMENT"] = str(venv)
+    old = _read_config(root)
+    # Opting out of a new job never deletes an already installed speaker setup.
+    install_speakers = bool(diarize or old.get("diarizationVerifiedAt"))
+    sync = [
+        uv, "sync", "--project", SCRIPT_ROOT, "--frozen", "--no-config",
+        "--python", managed_python_version(), "--managed-python", "--no-build",
+    ]
+    if install_speakers:
+        sync += ["--extra", "diarization"]
+    _command(sync, log, env, "Installing isolated audio runtime")
+    python = venv_python(venv)
+    # imageio-ffmpeg has a fixed bundled binary; ignore its environment override.
+    ffmpeg_pattern = "ffmpeg-win*.exe" if windows else "ffmpeg-macos*"
+    ffmpeg = Path(_probe_python(
+        python,
+        "import imageio_ffmpeg,pathlib; "
+        "p=pathlib.Path(imageio_ffmpeg.__file__).parent/'binaries'; "
+        f"b=list(p.glob({ffmpeg_pattern!r})); "
+        "assert len(b)==1,'bundled_ffmpeg_missing'; print(b[0])",
+        env,
+    ))
+    if not windows:
+        ffmpeg.chmod(ffmpeg.stat().st_mode | 0o100)
+    source_asset = MANIFEST["whisperSource"]
+    source = _ensure_source(runtime, windows=windows)
+    if windows:
+        whisper = _prepare_windows_whisper(runtime, source)
+    else:
+        whisper = _prepare_mac_whisper(runtime, source, python, env, log)
     model_path = _download_model(
         MANIFEST["models"][model], models, "Downloading selected transcription model",
     )
@@ -243,7 +355,10 @@ def setup_audio(root, model="small", diarize=True, *, uv_path=None):
         "schemaVersion": 1, "modelPreset": model,
         "python": str(python), "ffmpeg": str(ffmpeg), "whisperCLI": str(whisper),
         "model": str(model_path), "sourceRevision": source_asset["revision"],
+        "platform": "windows-x86_64" if windows else "macos-" + platform.machine(),
     }
+    if windows:
+        config["engineArchiveSHA256"] = MANIFEST["whisperWindows"]["sha256"]
     if diarize:
         for name, asset in MANIFEST["diarization"].items():
             path = _download_model(asset, models, f"Downloading speaker {name} model")
@@ -264,7 +379,7 @@ def setup_audio(root, model="small", diarize=True, *, uv_path=None):
     )
     if not verification.get("segments"):
         raise RuntimeError("audio_verification_produced_no_transcript")
-    sample_result = json.loads((output / "result.json").read_text())
+    sample_result = json.loads((output / "result.json").read_text(encoding="utf-8"))
     words = set(re.findall(
         r"[a-z]+",
         " ".join(row["text"] for row in sample_result["segments"]).lower(),
@@ -286,7 +401,7 @@ def setup_audio(root, model="small", diarize=True, *, uv_path=None):
         "scope": "local public-sample smoke test; not transcription-quality benchmark",
     }
     temporary = runtime / "config.json.tmp"
-    temporary.write_text(json.dumps(config, indent=2) + "\n")
+    temporary.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
     temporary.replace(runtime / "config.json")
     report("Local audio setup verified", force=True)
     return {"ok": True, **audio_status(root), "verification": config["verification"]}
@@ -295,7 +410,7 @@ def setup_audio(root, model="small", diarize=True, *, uv_path=None):
 def _run_transcription(config, audio, output, *, language="auto", diarize=True,
                        threads=4, speakers=None, asset_metadata=None, env=None):
     command = [
-        config["python"], str(SCRIPT_ROOT / "refine_audio.py"),
+        config["python"], "-X", "utf8", str(SCRIPT_ROOT / "refine_audio.py"),
         "--audio", str(Path(audio).expanduser().resolve()),
         "--model", config["model"],
         "--output", str(Path(output).expanduser().resolve()),
@@ -314,14 +429,19 @@ def _run_transcription(config, audio, output, *, language="auto", diarize=True,
     if asset_metadata is not None:
         command += ["--asset-metadata", str(Path(asset_metadata).expanduser().resolve())]
     # Progress remains visible on stderr; only structured output is captured.
-    result = subprocess.run(
-        command, env=env, stdout=subprocess.PIPE, text=True, timeout=21600,
+    process = start_process(
+        command, env=env, stdout=subprocess.PIPE, text=True, encoding="utf-8",
     )
     try:
-        payload = json.loads(result.stdout)
+        stdout, _ = process.communicate(timeout=21600)
+    except BaseException:
+        stop_process(process)
+        raise
+    try:
+        payload = json.loads(stdout)
     except ValueError as error:
         raise RuntimeError("audio_runner_returned_invalid_json") from error
-    if result.returncode or not payload.get("ok"):
+    if process.returncode or not payload.get("ok"):
         raise RuntimeError(payload.get("error", "local_transcription_failed"))
     return payload
 

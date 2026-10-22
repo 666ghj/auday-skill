@@ -10,6 +10,8 @@ import sys
 import tarfile
 import tempfile
 import unittest
+import zipfile
+from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
@@ -77,7 +79,8 @@ class RuntimeSetupTests(unittest.TestCase):
         self.assertEqual(opened.call_args_list[1].args[0].get_header("Range"), "bytes=10-")
         self.assertEqual(self.target.read_bytes(), self.payload)
         self.assertFalse(self.target.with_name("download.bin.partial").exists())
-        self.assertEqual(self.target.stat().st_mode & 0o777, 0o600)
+        if os.name != "nt":
+            self.assertEqual(self.target.stat().st_mode & 0o777, 0o600)
 
     def test_server_ignoring_range_restarts_instead_of_appending(self):
         partial = self.target.with_name("download.bin.partial")
@@ -146,7 +149,10 @@ class RuntimeSetupTests(unittest.TestCase):
         for name in ("download.bin", "download.bin.partial"):
             with self.subTest(destination=name):
                 path = self.root / name
-                path.symlink_to(original)
+                try:
+                    path.symlink_to(original)
+                except OSError:
+                    self.skipTest("symlink creation is unavailable for this account")
                 with patch.object(runtime.urllib.request, "urlopen") as opened:
                     with self.assertRaisesRegex(ValueError, "is_symlink"):
                         self.download()
@@ -169,6 +175,7 @@ class RuntimeSetupTests(unittest.TestCase):
                     output.addfile(member)
         return archive
 
+    @unittest.skipIf(os.name == "nt", "macOS runtime archives use symlinks; Windows uses ZIPs")
     def test_tar_preserves_contained_dylib_symlink_and_executable(self):
         archive = self.archive([
             ("runtime/libggml.1.dylib", "file", b"synthetic dynamic library"),
@@ -187,16 +194,25 @@ class RuntimeSetupTests(unittest.TestCase):
         cases = [
             [("../outside", "file", b"overwrite")],
             [(str(outside), "file", b"overwrite")],
+            [("C:/outside", "file", b"overwrite")],
+            [(r"C:\outside", "file", b"overwrite")],
+            [(r"\\server\share\outside", "file", b"overwrite")],
+            [("safe:payload", "file", b"alternate data stream")],
+            [("CON.txt", "file", b"device alias")],
+            [("trailing.", "file", b"filename alias")],
             [("runtime/link", "symlink", "../../outside")],
             [("runtime/link", "symlink", str(outside))],
+            [("runtime/link", "symlink", "C:/outside")],
+            [("runtime/link", "symlink", r"C:\outside")],
+            [("runtime/link", "hardlink", "safe:payload")],
             [("runtime/link", "hardlink", "../outside")],
             [("link", "symlink", "safe"), ("link/child", "file", b"written through link")],
             [("runtime/one", "symlink", "two"), ("runtime/two", "symlink", "one")],
         ]
-        for entries in cases:
+        for index, entries in enumerate(cases):
             with self.subTest(entries=entries):
                 archive = self.archive(entries)
-                destination = self.root / "unpacked"
+                destination = self.root / f"unpacked-{index}"
                 with self.assertRaises(ValueError):
                     runtime.extract_tar(archive, destination)
                 self.assertFalse(destination.exists())
@@ -213,12 +229,12 @@ class RuntimeSetupTests(unittest.TestCase):
         self.assertEqual((destination / "personal-file").read_bytes(), b"retain")
 
     def test_modified_runtime_installation_is_not_overwritten(self):
-        asset = runtime.runtime_asset("uv", "arm64")
+        asset = runtime.runtime_asset("uv", "arm64", "macos")
         destination = self.root / "runtime" / asset["install_dir"]
         destination.mkdir(parents=True)
         (destination / "user-note").write_bytes(b"preserve")
         with patch.object(runtime, "runtime_asset", return_value=asset), \
-                patch.object(runtime, "require_macos"), \
+                patch.object(runtime, "require_supported_system"), \
                 patch.object(runtime, "download_asset") as downloaded:
             with self.assertRaisesRegex(ValueError, "existing_runtime_incomplete"):
                 runtime.install_runtime(self.root, "uv")
@@ -242,7 +258,7 @@ class RuntimeSetupTests(unittest.TestCase):
             self.assertNotIn(key, environment)
         for key in ("UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR", "HF_HOME", "TORCH_HOME"):
             self.assertTrue(Path(environment[key]).is_relative_to(self.root.resolve()))
-        self.assertEqual(environment["UV_PYTHON"], runtime.PYTHON_VERSION)
+        self.assertEqual(environment["UV_PYTHON"], runtime.managed_python_version())
         self.assertEqual(environment["UV_MANAGED_PYTHON"], "1")
         self.assertEqual(environment["UV_NO_CONFIG"], "1")
         self.assertEqual(environment["PYTHONNOUSERSITE"], "1")
@@ -264,8 +280,8 @@ class RuntimeSetupTests(unittest.TestCase):
 
     def test_both_architectures_have_distinct_complete_runtime_entries(self):
         for component in ("uv", "llama"):
-            arm = runtime.runtime_asset(component, "arm64")
-            intel = runtime.runtime_asset(component, "x86_64")
+            arm = runtime.runtime_asset(component, "arm64", "macos")
+            intel = runtime.runtime_asset(component, "x86_64", "macos")
             self.assertNotEqual(arm["url"], intel["url"])
             self.assertNotEqual(arm["sha256"], intel["sha256"])
             self.assertNotEqual(arm["install_dir"], intel["install_dir"])
@@ -275,7 +291,7 @@ class RuntimeSetupTests(unittest.TestCase):
                 self.assertGreater(asset["size"], 0)
                 self.assertFalse(Path(asset["archive_root"]).is_absolute())
         with self.assertRaisesRegex(ValueError, "unsupported_runtime_asset"):
-            runtime.runtime_asset("uv", "unsupported")
+            runtime.runtime_asset("uv", "unsupported", "macos")
 
     def test_macos_13_core_and_13_3_semantic_have_separate_boundaries(self):
         with patch.object(runtime.sys, "platform", "darwin"), \
@@ -289,6 +305,108 @@ class RuntimeSetupTests(unittest.TestCase):
         with patch.object(runtime.sys, "platform", "linux"):
             with self.assertRaisesRegex(ValueError, "setup_requires_macos"):
                 runtime.require_macos("13.0")
+
+    def zip_archive(self, entries):
+        archive = self.root / "synthetic.zip"
+        with zipfile.ZipFile(archive, "w") as output:
+            for name, content, mode in entries:
+                member = zipfile.ZipInfo(name)
+                # Keep the malicious raw header name even on Windows, whose
+                # ZipInfo constructor otherwise converts backslashes to slashes.
+                member.filename = name
+                member.external_attr = mode << 16
+                output.writestr(member, content)
+        return archive
+
+    def test_zip_keeps_executable_and_all_adjacent_libraries(self):
+        archive = self.zip_archive([
+            ("tool.exe", b"synthetic executable", 0o100755),
+            ("runtime.dll", b"synthetic library", 0o100644),
+            ("nested/data", b"nested asset", 0o100644),
+        ])
+        output = runtime.extract_zip(archive, self.root / "unpacked")
+        self.assertEqual((output / "tool.exe").read_bytes(), b"synthetic executable")
+        self.assertEqual((output / "runtime.dll").read_bytes(), b"synthetic library")
+        self.assertEqual((output / "nested/data").read_bytes(), b"nested asset")
+
+    def test_zip_rejects_traversal_links_and_windows_filename_aliases(self):
+        dangerous = ["../outside", "/outside", "C:/outside", "dir\\outside", "dir/../outside",
+                     "tool.exe:payload", "CON.txt", "LPT1", "COM¹.txt", "trailing.", "trailing ",
+                     "dir//outside", "dir/./outside", "nul\x00payload"]
+        cases = [[(name, b"unsafe", 0o100644)] for name in dangerous]
+        cases.extend([
+            [("link", b"outside", 0o120777)],
+            [("tool.exe", b"first", 0o100644), ("TOOL.EXE", b"second", 0o100644)],
+            [("dir", b"file parent", 0o100644), ("dir/child", b"child", 0o100644)],
+        ])
+        for index, entries in enumerate(cases):
+            with self.subTest(entries=entries):
+                archive = self.zip_archive(entries)
+                with zipfile.ZipFile(archive) as source:
+                    self.assertEqual([member.orig_filename for member in source.infolist()],
+                                     [entry[0] for entry in entries])
+                destination = self.root / f"unpacked-{index}"
+                with self.assertRaises(ValueError):
+                    runtime.extract_zip(archive, destination)
+                self.assertFalse(destination.exists())
+                self.assertFalse((self.root / "outside").exists())
+
+    def test_zip_checks_original_name_before_windows_normalization(self):
+        archive = self.zip_archive([(r"dir\outside", b"unsafe", 0o100644)])
+        # Exercise Windows ZipInfo behavior on every CI host, so macOS also
+        # catches regressions that inspect only the already-normalized filename.
+        with patch.object(runtime.zipfile.os, "sep", "\\"):
+            with zipfile.ZipFile(archive) as source:
+                member = source.infolist()[0]
+                self.assertEqual(member.filename, "dir/outside")
+                self.assertEqual(member.orig_filename, r"dir\outside")
+            with self.assertRaisesRegex(ValueError, "unsafe_archive_path"):
+                runtime.extract_zip(archive, self.root / "unpacked")
+        self.assertFalse((self.root / "unpacked").exists())
+
+    def test_windows_assets_are_distinct_and_keep_flat_zip_layout(self):
+        for component in ("uv", "llama"):
+            asset = runtime.runtime_asset(component, "x86_64", "windows")
+            mac = runtime.runtime_asset(component, "x86_64", "macos")
+            self.assertEqual(asset["archive_format"], "zip")
+            self.assertEqual(asset["archive_root"], ".")
+            self.assertTrue(asset["executable"].endswith(".exe"))
+            self.assertNotEqual(asset["install_dir"], mac["install_dir"])
+        with self.assertRaisesRegex(ValueError, "unsupported_runtime_asset"):
+            runtime.runtime_asset("uv", "arm64", "windows")
+
+    def test_windows_runtime_publishes_zip_with_no_directory_replacement(self):
+        asset = runtime.runtime_asset("uv", "x86_64", "windows")
+        archive = self.zip_archive([("uv.exe", b"synthetic executable", 0o100755),
+                                    ("runtime.dll", b"library", 0o100644)])
+        with patch.object(runtime.sys, "platform", "win32"), \
+                patch.object(runtime, "runtime_asset", return_value=asset), \
+                patch.object(runtime, "require_supported_system"), \
+                patch.object(runtime, "download_asset", return_value=archive), \
+                patch.object(runtime.os, "replace", side_effect=AssertionError("Windows cannot replace directories")):
+            executable = runtime.install_runtime(self.root, "uv")
+            self.assertEqual(executable.read_bytes(), b"synthetic executable")
+            self.assertEqual((executable.parent / "runtime.dll").read_bytes(), b"library")
+            self.assertEqual(runtime.install_runtime(self.root, "uv"), executable)
+
+    def test_windows_requires_x64_and_python_313_but_no_apple_compiler(self):
+        with patch.object(runtime.sys, "platform", "win32"), \
+                patch.object(runtime.sys, "getwindowsversion", create=True, return_value=SimpleNamespace(major=10)), \
+                patch.object(runtime.platform, "machine", return_value="AMD64"), \
+                patch.object(runtime.subprocess, "run") as run:
+            self.assertEqual(runtime.require_supported_system("13.3"), "windows")
+            self.assertEqual(runtime.managed_python_version(), "3.13.16")
+            self.assertTrue(runtime.command_line_tools_status()["ready"])
+            run.assert_not_called()
+        with patch.object(runtime.sys, "platform", "win32"), \
+                patch.object(runtime.sys, "getwindowsversion", create=True, return_value=SimpleNamespace(major=6)):
+            with self.assertRaisesRegex(ValueError, "requires_windows_10"):
+                runtime.require_supported_system()
+        with patch.object(runtime.sys, "platform", "win32"), \
+                patch.object(runtime.sys, "getwindowsversion", create=True, return_value=SimpleNamespace(major=10)), \
+                patch.object(runtime.platform, "machine", return_value="ARM64"):
+            with self.assertRaisesRegex(ValueError, "windows_x64_required"):
+                runtime.require_supported_system()
 
     @unittest.skipUnless(sys.platform == "darwin", "bootstrap is a macOS system-shell entrypoint")
     def test_bootstrap_check_needs_no_runtime_and_creates_no_private_files(self):

@@ -1,11 +1,13 @@
 """First-use state and recovery, using synthetic files and no network/model downloads."""
 
+import contextlib
 import hashlib
 import json
 from pathlib import Path
 import sqlite3
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -30,9 +32,10 @@ class FirstRunTests(unittest.TestCase):
         self.model.write_bytes(b"synthetic model")
         self.server.write_bytes(b"synthetic runtime")
         self.library = self.profile / "library.sqlite"
-        with sqlite3.connect(self.library) as db:
+        with contextlib.closing(sqlite3.connect(self.library)) as db:
             db.execute("CREATE TABLE records(id TEXT PRIMARY KEY, text TEXT)")
             db.execute("INSERT INTO records VALUES(?,?)", ("synthetic-record", "Keep this local record."))
+            db.commit()
         self.before_library = self.library.read_bytes()
         self.progress = patch.object(first_run, "report")
         self.progress.start()
@@ -44,7 +47,7 @@ class FirstRunTests(unittest.TestCase):
 
     def write_configuration(self, profile, model, server):
         value = {"modelPath": str(model), "serverPath": str(server)}
-        (profile / "semantic-config.json").write_text(json.dumps(value))
+        (profile / "semantic-config.json").write_text(json.dumps(value), encoding="utf-8")
         return value
 
     def create_verified_previous_setup(self):
@@ -90,7 +93,7 @@ class FirstRunTests(unittest.TestCase):
         self.assertEqual((self.profile / "semantic-config.json").read_bytes(), previous)
         self.assertEqual((other / "setup-state.json").read_bytes(), before_other)
         self.assertEqual(
-            json.loads((self.profile / "setup-state.json").read_text())["unrelatedUserPreference"],
+            json.loads((self.profile / "setup-state.json").read_text(encoding="utf-8"))["unrelatedUserPreference"],
             "preserve",
         )
 
@@ -106,7 +109,7 @@ class FirstRunTests(unittest.TestCase):
             self.assertEqual(self.library.read_bytes(), self.before_library)
             return {"checksPassed": 3, "syntheticDataOnly": True}
 
-        with patch.object(first_run, "require_macos") as required, \
+        with patch.object(first_run, "require_supported_system") as required, \
                 patch.object(first_run, "install_runtime", return_value=self.server), \
                 patch.object(first_run, "download_asset", return_value=self.model), \
                 patch.object(semantic_search, "configure", side_effect=self.write_configuration), \
@@ -125,7 +128,7 @@ class FirstRunTests(unittest.TestCase):
 
     def test_failed_smoke_removes_new_configuration_and_preserves_library(self):
         first_run.defer_semantic(self.root)
-        with patch.object(first_run, "require_macos"), \
+        with patch.object(first_run, "require_supported_system"), \
                 patch.object(first_run, "install_runtime", return_value=self.server), \
                 patch.object(first_run, "download_asset", return_value=self.model), \
                 patch.object(semantic_search, "configure", side_effect=self.write_configuration), \
@@ -141,7 +144,7 @@ class FirstRunTests(unittest.TestCase):
         self.assertEqual(list(self.profile.glob(".setup-*")), [])
 
     def test_download_failure_remembers_request_without_reasking(self):
-        with patch.object(first_run, "require_macos"), \
+        with patch.object(first_run, "require_supported_system"), \
                 patch.object(first_run, "install_runtime", side_effect=ValueError("network unavailable")):
             with self.assertRaisesRegex(ValueError, "network unavailable"):
                 first_run.setup_semantic(self.root)
@@ -155,7 +158,7 @@ class FirstRunTests(unittest.TestCase):
         config, state = self.create_verified_previous_setup()
         index = self.profile / "semantic.sqlite"
         index.write_bytes(b"synthetic previous complete index")
-        with patch.object(first_run, "require_macos"), \
+        with patch.object(first_run, "require_supported_system"), \
                 patch.object(first_run, "install_runtime", return_value=self.server), \
                 patch.object(first_run, "download_asset", return_value=self.model), \
                 patch.object(semantic_search, "configure", side_effect=self.write_configuration), \
@@ -185,7 +188,7 @@ class FirstRunTests(unittest.TestCase):
 
     def test_model_download_failure_preserves_existing_configuration(self):
         config, state = self.create_verified_previous_setup()
-        with patch.object(first_run, "require_macos"), \
+        with patch.object(first_run, "require_supported_system"), \
                 patch.object(first_run, "install_runtime", return_value=self.server), \
                 patch.object(first_run, "download_asset", side_effect=ValueError("download_hash_mismatch")), \
                 patch.object(semantic_search, "configure") as configured, \
@@ -211,14 +214,14 @@ class FirstRunTests(unittest.TestCase):
         self.assertFalse(status["semantic"]["verifiedBySetup"])
 
     def test_current_integrity_detects_changed_model_and_runtime_libraries(self):
-        library = self.root / "libsynthetic.dylib"
+        library = self.root / "libsynthetic.dll"
         library.write_bytes(b"original runtime dependency")
         value = {
             "modelPath": str(self.model), "serverPath": str(self.server),
             "runtimeSHA256": semantic_search._runtime_identity(self.server),
         }
         config = self.profile / "semantic-config.json"
-        config.write_text(json.dumps(value))
+        config.write_text(json.dumps(value), encoding="utf-8")
         (self.profile / "setup-state.json").write_text(json.dumps({
             "semanticChoice": "enabled",
             "semanticVerification": {"configSHA256": digest(config.read_bytes())},
@@ -260,6 +263,54 @@ class FirstRunTests(unittest.TestCase):
                           return_value=SyntheticEncoder(basis + [basis[0]] * 3)):
             with self.assertRaisesRegex(ValueError, "semantic_setup_verification_failed"):
                 first_run._verify_semantic({})
+
+    def test_windows_semantic_status_uses_supported_system_gate(self):
+        with patch.object(setup_runtime.sys, "platform", "win32"), \
+                patch.object(setup_runtime.platform, "machine", return_value="AMD64"), \
+                patch.object(setup_runtime.sys, "getwindowsversion", create=True, return_value=SimpleNamespace(major=10)):
+            status = first_run.setup_status(self.root)
+        self.assertTrue(status["semantic"]["supported"])
+        self.assertTrue(status["recommendSemantic"])
+        self.assertGreater(status["semantic"]["runtimeArchiveBytes"], 0)
+
+    def test_unsupported_system_status_does_not_select_runtime(self):
+        with patch.object(first_run, "require_supported_system", side_effect=ValueError("unsupported")), \
+                patch.object(first_run, "runtime_asset") as selected:
+            status = first_run.setup_status(self.root)
+        selected.assert_not_called()
+        self.assertFalse(status["semantic"]["supported"])
+        self.assertFalse(status["recommendSemantic"])
+        self.assertIsNone(status["semantic"]["runtimeArchiveBytes"])
+
+    def test_managed_python_recognizes_only_private_python_or_its_exact_link_venv(self):
+        private = self.root / "runtime/python/cpython-private"
+        link_python = self.root / "runtime/windows-link/venv/Scripts/python.exe"
+        cases = (
+            (private / "python.exe", private, True),
+            (link_python, private, True),
+            (link_python, self.root / "global-python", False),
+            (self.root / "runtime/other/python.exe", private, False),
+        )
+        for executable, base_prefix, expected in cases:
+            with self.subTest(executable=executable, base_prefix=base_prefix), \
+                    patch.object(first_run.sys, "executable", str(executable)), \
+                    patch.object(first_run.sys, "base_prefix", str(base_prefix)), \
+                    patch.object(first_run, "venv_python", return_value=link_python):
+                self.assertEqual(first_run._python_managed_by_setup(self.root), expected)
+
+    def test_audio_model_recommendation_uses_portable_memory_query(self):
+        for memory, expected in ((0, "small"), (8 * 1024**3, "small"), (16 * 1024**3, "turbo")):
+            with patch.object(first_run, "physical_memory_bytes", return_value=memory):
+                self.assertEqual(first_run.recommended_audio_model(), expected)
+
+    def test_unicode_profile_paths_round_trip_as_utf8(self):
+        root = self.root / "Auday 数据 日本語"
+        first_run.defer_semantic(root)
+        status = first_run.setup_status(root)
+        self.assertEqual(status["semantic"]["choice"], "deferred")
+        marker = root / "default" / "semantic-config.json"
+        first_run._save(marker, {"modelPath": str(root / "模型.gguf")})
+        self.assertEqual(first_run._load(marker)["modelPath"], str(root / "模型.gguf"))
 
     def test_invalid_profiles_cannot_write_outside_selected_data_root(self):
         for profile in ("../escape", "/absolute", "", "a/b", "a" * 65):

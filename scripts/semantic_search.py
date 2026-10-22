@@ -4,7 +4,6 @@
 import argparse
 import contextlib
 import datetime
-import fcntl
 import hashlib
 import heapq
 import http.client
@@ -15,13 +14,19 @@ import os
 from pathlib import Path
 import re
 import secrets
+import shutil
 import socket
 import sqlite3
 import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
+
+from platform_utils import (
+    is_windows, lock_file, unlock_file, secure_directory, start_process, stop_process,
+)
 
 try:
     from progress import report
@@ -71,7 +76,7 @@ def _atomic_json(path, value):
     path = Path(path)
     fd, name = tempfile.mkstemp(prefix=".semantic-", dir=path.parent)
     try:
-        with os.fdopen(fd, "w") as target:
+        with os.fdopen(fd, "w", encoding="utf-8") as target:
             target.write(_json(value))
             target.flush()
             os.fsync(target.fileno())
@@ -83,8 +88,14 @@ def _atomic_json(path, value):
 
 def _runtime_identity(server):
     """Include linked libraries: recent llama-server binaries are thin launchers."""
-    files = [server, *sorted(server.parent.glob("*.dylib"))]
-    return _digest({p.name: _sha(p) for p in files})
+    server = Path(server)
+    libraries = sorted(
+        (path for path in server.parent.rglob("*")
+         if path.is_file() and path.suffix.lower() in (".dylib", ".dll")),
+        key=lambda path: path.relative_to(server.parent).as_posix(),
+    )
+    files = [server, *libraries]
+    return _digest({p.relative_to(server.parent).as_posix(): _sha(p) for p in files})
 
 
 def configure(root, model_path, server_path):
@@ -101,7 +112,7 @@ def configure(root, model_path, server_path):
         raise ValueError("semantic_runtime_mismatch: require llama.cpp b10865 (d4389a4dd)")
     config = {"modelPath": str(model), "serverPath": str(server),
               "runtimeSHA256": _runtime_identity(server), "policy": POLICY}
-    root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    secure_directory(root)
     _atomic_json(root / "semantic-config.json", config)
     return {"configured": True, "model": POLICY["model"], "dimensions": DIMENSIONS,
             "configPath": str(root / "semantic-config.json"), "modelBytes": model.stat().st_size,
@@ -112,7 +123,7 @@ def _configuration(root):
     path = Path(root) / "semantic-config.json"
     if not path.is_file():
         raise ValueError("semantic_not_configured: run configure-semantic with local model and runtime")
-    config = json.loads(path.read_text())
+    config = json.loads(path.read_text(encoding="utf-8"))
     if config.get("policy") != POLICY:
         raise ValueError("semantic_configuration_changed: configure and rebuild the index")
     return config
@@ -129,13 +140,74 @@ class _UnixHTTP(http.client.HTTPConnection):
         self.sock.connect(self.path)
 
 
+def _loopback_port():
+    # The runtime cannot inherit a listening socket. Reserve an OS-selected port
+    # until immediately before launch; startup detects a runtime bind failure.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            listener.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        listener.bind(("127.0.0.1", 0))
+        return listener.getsockname()[1]
+
+
+class _StartupDiagnostics:
+    """Drain stderr without exposing paths, model text, or unbounded logs."""
+    def __init__(self, stream):
+        self.stream = stream
+        self.capture = bytearray()
+        self.recording = True
+        self.lock = threading.Lock()
+        self.thread = threading.Thread(target=self._drain, daemon=True)
+        self.thread.start()
+
+    def _drain(self):
+        try:
+            while block := self.stream.read(1024):
+                with self.lock:
+                    if self.recording:
+                        self.capture.extend(block[:max(0, 16 * 1024 - len(self.capture))])
+        except (OSError, ValueError):
+            pass
+
+    def ready(self):
+        with self.lock:
+            self.recording = False
+            self.capture.clear()
+
+    def failure(self, code):
+        self.thread.join(timeout=1)
+        with self.lock:
+            detail = bytes(self.capture).lower()
+        windows_code = code & 0xFFFFFFFF
+        if windows_code == 0xC0000135:
+            reason = "missing_runtime_dependency"
+        elif windows_code == 0xC000001D:
+            reason = "unsupported_cpu_instruction"
+        elif windows_code in (0xC000007B, 0xC0000142):
+            reason = "native_runtime_load_failed"
+        elif b"failed to open file" in detail:
+            reason = "runtime_file_unreadable"
+        elif b"invalid argument" in detail or b"unknown argument" in detail:
+            reason = "runtime_argument_invalid"
+        else:
+            reason = "native_runtime_startup_failed"
+        return f"semantic_runtime_failed_to_start: exit_code={code}; reason={reason}"
+
+    def close(self):
+        self.ready()
+        self.thread.join(timeout=1)
+        self.stream.close()
+
+
 class LocalEncoder:
-    """Private Unix socket, no network listener, no external inference or logs."""
+    """Private Unix socket or authenticated Windows loopback; local inference only."""
     def __init__(self, config):
         self.config = config
         self.identity = _digest(config["policy"] | {"runtimeSHA256": config["runtimeSHA256"]})
         self.process = None
         self.directory = None
+        self.loopback_port = None
+        self.diagnostics = None
 
     def __enter__(self):
         model = Path(self.config["modelPath"])
@@ -143,31 +215,59 @@ class LocalEncoder:
         report("Verifying local semantic model", force=True)
         if _sha(model) != MODEL_SHA or _runtime_identity(server) != self.config["runtimeSHA256"]:
             raise ValueError("semantic_model_or_runtime_changed: configure and rebuild")
-        self.directory = tempfile.TemporaryDirectory(prefix="auday-emb-", dir="/tmp")
-        directory = Path(self.directory.name)
-        self.endpoint = directory / "s.sock"
-        self.token = secrets.token_urlsafe(32)
-        token_file = directory / "auth"
-        token_file.write_text(self.token)
-        token_file.chmod(0o600)
-        cmd = [
-            str(server), "-m", str(model), "--embeddings", "--pooling", "mean",
-            "--embd-normalize", "2", "-ngl", "0", "--device", "none",
-            "-t", "2", "-tb", "2", "-c", str(MAX_TOKENS), "-b", str(MAX_TOKENS),
-            "-ub", str(MAX_TOKENS), "-np", "1", "--host", str(self.endpoint),
-            "--api-key-file", str(token_file), "--offline", "--no-warmup",
-            "--no-cache-prompt", "--cache-ram", "0", "--no-repack",
-            "--no-webui", "--log-disable",
-        ]
-        report("Loading local semantic model", force=True)
+        # macOS Unix sockets have a short path limit. Windows uses the user's
+        # system temp directory and never assumes a POSIX filesystem layout.
+        self.directory = tempfile.TemporaryDirectory(
+            prefix="auday-emb-", dir=None if is_windows() else "/tmp",
+        )
         try:
-            self.process = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            directory = secure_directory(Path(self.directory.name))
+            self.token = secrets.token_urlsafe(32)
+            token_file = directory / "auth"
+            token_file.write_text(self.token, encoding="utf-8")
+            if not is_windows():
+                token_file.chmod(0o600)
+            model_argument, token_argument, working_directory = str(model), str(token_file), server.parent
+            if is_windows():
+                # b10865 converts argv to UTF-8, but --api-key-file still uses
+                # narrow std::ifstream on Windows. Use ASCII names relative to
+                # a Unicode working directory passed through CreateProcessW.
+                model_alias = directory / "model.gguf"
+                try:
+                    os.link(model, model_alias)
+                except OSError:
+                    # A custom model location may be on another filesystem.
+                    shutil.copyfile(model, model_alias)
+                model_argument, token_argument, working_directory = "model.gguf", "auth", directory
+                self.loopback_port = _loopback_port()
+                endpoint_arguments = ["--host", "127.0.0.1", "--port", str(self.loopback_port)]
+            else:
+                self.endpoint = directory / "s.sock"
+                endpoint_arguments = ["--host", str(self.endpoint)]
+            cmd = [
+                str(server), "-m", model_argument, "--embeddings", "--pooling", "mean",
+                "--embd-normalize", "2", "-ngl", "0", "--device", "none",
+                "-t", "2", "-tb", "2", "-c", str(MAX_TOKENS), "-b", str(MAX_TOKENS),
+                "-ub", str(MAX_TOKENS), "-np", "1", *endpoint_arguments,
+                "--api-key-file", token_argument, "--offline", "--no-warmup",
+                "--no-cache-prompt", "--cache-ram", "0", "--no-repack",
+                "--no-webui", "--log-disable",
+            ]
+            report("Loading local semantic model", force=True)
+            self.process = start_process(
+                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                stdin=subprocess.DEVNULL, cwd=working_directory, bufsize=0,
+            )
+            self.diagnostics = _StartupDiagnostics(self.process.stderr)
             deadline = time.monotonic() + 60
             while time.monotonic() < deadline:
-                if self.process.poll() is not None:
-                    raise RuntimeError("semantic_runtime_failed_to_start")
+                code = self.process.poll()
+                if code is not None:
+                    raise RuntimeError(self.diagnostics.failure(code))
                 try:
-                    if self._api("health").get("status") == "ok":
+                    healthy = self._api("health", timeout=1).get("status") == "ok"
+                    if healthy and self.process.poll() is None:
+                        self.diagnostics.ready()
                         return self
                 except (OSError, http.client.HTTPException, ValueError):
                     pass
@@ -178,18 +278,24 @@ class LocalEncoder:
             raise
 
     def __exit__(self, *_):
-        if self.process is not None and self.process.poll() is None:
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-                self.process.wait()
-        if self.directory is not None:
-            self.directory.cleanup()
+        try:
+            if self.process is not None:
+                stop_process(self.process, timeout=5)
+        finally:
+            self.process = None
+            if self.diagnostics is not None:
+                self.diagnostics.close()
+                self.diagnostics = None
+            if self.directory is not None:
+                self.directory.cleanup()
+                self.directory = None
 
-    def _api(self, endpoint, payload=None):
-        connection = _UnixHTTP(self.endpoint)
+    def _api(self, endpoint, payload=None, *, timeout=60):
+        # http.client connects directly; proxy environment variables cannot send
+        # private text off-machine. Neither endpoint comes from user config.
+        connection = (http.client.HTTPConnection("127.0.0.1", self.loopback_port, timeout=timeout)
+                      if self.loopback_port is not None else _UnixHTTP(self.endpoint))
+        connection.timeout = timeout
         try:
             connection.request(
                 "POST" if payload is not None else "GET", "/" + endpoint,
@@ -338,16 +444,16 @@ def _open_index(root):
 @contextlib.contextmanager
 def _build_lock(root):
     path = Path(root) / ".semantic-index.lock"
-    with path.open("a") as lock:
+    with path.open("a+b") as lock:
         os.chmod(path, 0o600)
         try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            lock_file(lock, blocking=False)
         except BlockingIOError:
             raise ValueError("semantic_index_busy") from None
         try:
             yield
         finally:
-            fcntl.flock(lock, fcntl.LOCK_UN)
+            unlock_file(lock)
 
 
 def build_index(root, *, encoder=None):
@@ -363,9 +469,10 @@ def _build_index(root, encoder):
     staging = None
     with contextlib.ExitStack() as stack:
         source_state, source_records = _source_records(root)
+        databases = stack.enter_context(contextlib.ExitStack())
         old = None
         try:
-            old = stack.enter_context(contextlib.closing(_open_index(root)))
+            old = databases.enter_context(contextlib.closing(_open_index(root)))
             old_meta = _manifest(old)
             if old_meta["encoderIdentity"] != encoder.identity:
                 old = None
@@ -376,20 +483,20 @@ def _build_index(root, encoder):
             old = None
         fd, staging = tempfile.mkstemp(prefix=".semantic-build-", suffix=".sqlite", dir=root)
         os.close(fd)
-        target = stack.enter_context(contextlib.closing(sqlite3.connect(staging)))
-        target.executescript("""
-            PRAGMA journal_mode=DELETE;
-            PRAGMA synchronous=FULL;
-            CREATE TABLE metadata(key TEXT PRIMARY KEY,value TEXT);
-            CREATE TABLE records(id TEXT PRIMARY KEY,revision TEXT,kind TEXT,date TEXT,state TEXT,title TEXT);
-            CREATE TABLE chunks(record_id TEXT,ordinal INTEGER,start INTEGER,end INTEGER,text TEXT,vector BLOB,
-                                PRIMARY KEY(record_id,ordinal));
-            CREATE INDEX records_filters ON records(kind,date);
-        """)
-        count = reused = encoded = chunk_count = 0
-        active_encoder = None
-        report("Indexing text", 0, source_state["recordCount"], "records", force=True)
         try:
+            target = databases.enter_context(contextlib.closing(sqlite3.connect(staging)))
+            target.executescript("""
+                PRAGMA journal_mode=DELETE;
+                PRAGMA synchronous=FULL;
+                CREATE TABLE metadata(key TEXT PRIMARY KEY,value TEXT);
+                CREATE TABLE records(id TEXT PRIMARY KEY,revision TEXT,kind TEXT,date TEXT,state TEXT,title TEXT);
+                CREATE TABLE chunks(record_id TEXT,ordinal INTEGER,start INTEGER,end INTEGER,text TEXT,vector BLOB,
+                                    PRIMARY KEY(record_id,ordinal));
+                CREATE INDEX records_filters ON records(kind,date);
+            """)
+            count = reused = encoded = chunk_count = 0
+            active_encoder = None
+            report("Indexing text", 0, source_state["recordCount"], "records", force=True)
             for record_id, kind, date, state, title, text in source_records:
                 revision = _digest({"text": text, "title": title, "policy": POLICY})
                 target.execute("INSERT INTO records VALUES(?,?,?,?,?,?)",
@@ -425,13 +532,16 @@ def _build_index(root, encoder):
             # A sync can finish while encoding. Never label that old snapshot current.
             if not _same_source(_read_source_state(root), source_state):
                 raise ValueError("semantic_source_changed_during_build: rerun index")
-            target.close()
+            # Windows cannot replace a file while SQLite still has it open.
+            # This closes both the old index and staged database before publish.
+            databases.close()
             os.replace(staging, root / "semantic.sqlite")
             staging = None
             report("Semantic index ready", count, count, "records", force=True)
             return {**manifest, "changed": True, "indexPath": str(root / "semantic.sqlite"),
                     "indexBytes": (root / "semantic.sqlite").stat().st_size}
         finally:
+            databases.close()
             if staging:
                 for suffix in ("", "-journal"):
                     with contextlib.suppress(FileNotFoundError):
@@ -440,6 +550,13 @@ def _build_index(root, encoder):
 
 def status(root):
     root = Path(root).expanduser().resolve()
+    if not root.exists():
+        return {"configured": False, "indexPath": str(root / "semantic.sqlite"), "indexed": False}
+    with _build_lock(root):
+        return _status(root)
+
+
+def _status(root):
     result = {"configured": (root / "semantic-config.json").is_file(),
               "indexPath": str(root / "semantic.sqlite"), "indexed": False}
     if not (root / "semantic.sqlite").exists():
@@ -457,6 +574,11 @@ def status(root):
 
 def search(root, query, kind=None, date=None, limit=20, *, encoder=None):
     root = Path(root).expanduser().resolve()
+    with _build_lock(root):
+        return _search(root, query, kind, date, limit, encoder=encoder)
+
+
+def _search(root, query, kind, date, limit, *, encoder):
     if not isinstance(query, str) or not query.strip():
         raise ValueError("semantic_query_required")
     if not 1 <= limit <= 100:

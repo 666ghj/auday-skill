@@ -1,4 +1,4 @@
 interface:
   display_name: "Auday"
-  short_description: "Bring Auday memories and recordings into your workflow"
+  short_description: "Search Auday memories and recordings on Mac or Windows"
   default_prompt: "Use $auday to review today's discussions, identify follow-ups with sources, and tell me how current the available information is."

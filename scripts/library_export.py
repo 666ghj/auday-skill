@@ -10,6 +10,8 @@ import shutil
 import sqlite3
 import tempfile
 
+from platform_utils import is_windows, secure_directory
+
 
 LABELS = {
     "en": {
@@ -73,7 +75,7 @@ def export_library(database, destination, language="en", progress=None):
             raise ValueError("no_synced_snapshot")
         total = connection.execute("SELECT COUNT(*) FROM records").fetchone()[0]
         destination.parent.mkdir(parents=True, exist_ok=True)
-        staging = Path(tempfile.mkdtemp(prefix=".auday-export-", dir=destination.parent))
+        staging = secure_directory(Path(tempfile.mkdtemp(prefix=".auday-export-", dir=destination.parent)))
         (staging / "days").mkdir(mode=0o700)
         counts = Counter()
         kinds = Counter()
@@ -144,12 +146,17 @@ def export_library(database, destination, language="en", progress=None):
         for path in (staging / "index.md", staging / "manifest.json"):
             os.chmod(path, 0o600)
         # Claim the new destination; never replace an existing export or edits.
-        destination.mkdir(mode=0o700)
-        try:
-            os.replace(staging, destination)
-        except BaseException:
-            destination.rmdir()
-            raise
+        if is_windows():
+            # Windows rename fails atomically if the destination already exists;
+            # MoveFileEx cannot replace an existing directory, even when empty.
+            os.rename(staging, destination)
+        else:
+            destination.mkdir(mode=0o700)
+            try:
+                os.replace(staging, destination)
+            except BaseException:
+                destination.rmdir()
+                raise
         if progress:
             progress("Readable export complete", completed=total, total=total, unit="records", force=True)
         return {

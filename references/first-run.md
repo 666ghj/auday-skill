@@ -1,31 +1,48 @@
-# First-run setup on a new Mac
+# First-run setup on Mac or Windows
 
 Use this flow after the host installs the skill files or when a requested capability is missing. The user should be able to ask for the result in ordinary language; the agent performs the commands, downloads, configuration, and checks.
 
-Do not infer readiness from the developer's computer or another skill installation. A new Mac may have no Python, `uv`, Homebrew, Swift tools, models, pairing, or Auday data. The file installer only copies the skill package. Complete this capability check before describing the installation as ready to use.
+Do not infer readiness from the developer's computer or another skill installation. A new computer may have no Python, `uv`, developer tools, models, pairing, or Auday data. The file installer only copies the skill package. Complete this capability check before describing the installation as ready to use.
 
 ## Check without changing the computer
 
-Resolve `<skill-root>` to the installed folder containing `SKILL.md`; quote absolute paths in real commands.
+Resolve `<skill-root>` to the installed folder containing `SKILL.md`; quote absolute paths in real commands. Use the entrypoint for the actual host:
 
-```text
-/bin/sh <skill-root>/scripts/bootstrap.sh check
+On macOS:
+
+```sh
+/bin/sh "<skill-root>/scripts/bootstrap.sh" check
 ```
 
-This check works without Python and downloads nothing. Inspect macOS version, architecture, available disk/memory, command-line tools, and existing managed setup. Explain only the missing prerequisites that affect the user's next action.
+On Windows:
 
-The core client requires macOS 13 or later. The pinned semantic runtime requires macOS 13.3 or later. Check each capability independently: an unavailable optional runtime must not block available keyword search or readable exports. Apple Silicon and Intel paths differ; do not use an Apple Silicon-only runtime on Intel.
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<skill-root>\scripts\bootstrap.ps1" check
+```
+
+In the remaining examples, `<auday>` means that full platform-specific prefix, without the trailing `check`. Replace this documentation shorthand with the real prefix; it is not a command or alias already on the user's computer. Both entrypoints accept the same command names and arguments. Keep Windows commands on one line rather than copying a shell backslash continuation.
+
+`check` works without Python, creates no setup directories, and downloads nothing. Inspect OS, architecture, available disk/memory, and existing managed setup. Explain only the missing prerequisites that affect the user's next action.
+
+| Host | Supported setup | Platform requirements |
+| --- | --- | --- |
+| Windows | Windows 10/11 x64, Windows PowerShell 5.1 | Private Python 3.13.16; no pre-installed Python, WSL, Homebrew, MSVC, or separate GPU is needed |
+| macOS | macOS 13 or later; Apple Silicon or Intel | Private Python 3.12.15; the pinned semantic runtime requires macOS 13.3 or later; connection/audio builds require Apple developer tools |
+
+Windows ARM64 and Linux are outside this setup baseline. Check each capability independently: an unavailable optional runtime must not block available keyword search or readable exports. Do not install a binary for a different architecture.
 
 ## Prepare the base environment
 
 ```text
-/bin/sh <skill-root>/scripts/bootstrap.sh doctor
-/bin/sh <skill-root>/scripts/bootstrap.sh setup
+<auday> doctor
+<auday> setup
 ```
 
-The bootstrap can prepare a private `uv` executable and managed Python without relying on a globally installed Python or Homebrew. Explain the approximately 40 MB base download when needed; extracted files use more disk space. `doctor` checks the environment, and `setup` reads the saved onboarding state and capability suggestions.
+The bootstrap prepares private `uv` 0.13.3 and the host's managed Python without relying on a global Python or package manager. Read the selected download sizes from the setup output; the base environment and platform dependencies are additional to model downloads, and extracted files use more disk space. `doctor` checks the environment, and `setup` reads saved onboarding state and capability suggestions.
 
-Phone discovery and encrypted connection use a bundled Swift bridge that requires Swift 5.9 or later. The integrated audio setup also needs Apple's compiler to build Whisper.cpp. If Xcode Command Line Tools are missing, the agent can start the macOS installer:
+On Windows, the entrypoint prepares the locked Python connection environment, including Bonjour discovery through `zeroconf` and Python's TLS-PSK support. It uses prebuilt audio tools. `-ExecutionPolicy Bypass` affects only the launched PowerShell process; do not change the user's persistent execution policy. If an organization blocks scripts or network access, explain that specific policy and continue with available cached capabilities; do not disable security software.
+
+On macOS, phone discovery and encrypted connection use a bundled Swift bridge that requires Swift 5.9 or later. The integrated audio setup also needs Apple's compiler to build Whisper.cpp. If Xcode Command Line Tools are missing, the agent can start the macOS installer:
 
 ```text
 xcode-select --install
@@ -41,14 +58,16 @@ presence of `/usr/bin/swift` alone as a ready compiler.
 
 At the first onboarding, recommend installing local semantic search so the user can search ideas and paraphrases as well as exact words. Give one concise choice in the user's language:
 
-> I recommend preparing local semantic search. It downloads a 333.59 MB model and about 11.2 MB of runtime archives, plus the base environment if needed; extracted files and future indexes take additional space. The embedding model runs on your Mac. Shall I prepare it now, or leave it for later?
+> I recommend preparing local semantic search so I can find ideas even when you use different words. The model is 333.59 MB, with a small local runtime and base tools downloaded separately. It runs on this computer. Shall I prepare it now, or leave it for later?
+
+Give the relevant runtime download size: about 11.2 MB on Mac or 18.43 MB for Windows x64, plus about 3.22 MB for a private Microsoft runtime package on Windows when needed. Explain that extraction and future indexes need additional disk space.
 
 Mention the model's [Gemma terms](https://ai.google.dev/gemma/terms) when presenting this setup. This does not make the entire desktop assistant local: relevant excerpts returned to a cloud assistant can still reach its model.
 
 If the user already asked to configure semantic search, proceed under that request without asking the same question again. If they choose now:
 
 ```text
-/bin/sh <skill-root>/scripts/bootstrap.sh setup --semantic
+<auday> setup --semantic
 ```
 
 The setup downloads the pinned compatible runtime and complete model, verifies SHA-256 hashes, saves the local configuration, and runs a small synthetic verification. Only successful verification means the semantic capability is ready. It can be prepared before pairing; the user's actual archive is indexed after the first successful sync.
@@ -60,7 +79,7 @@ preparation instead of asking the same installation question again.
 If the user chooses later or declines:
 
 ```text
-/bin/sh <skill-root>/scripts/bootstrap.sh setup --defer-semantic
+<auday> setup --defer-semantic
 ```
 
 Keep keyword search and readable export available. Honor the saved choice instead of repeating the same offer on every invocation. Revisit it when the user requests semantic search or asks to change the setup. Do not silently download the model when a keyword query would satisfy the task.
@@ -72,8 +91,8 @@ Follow [Connection](connection.md): same Wi-Fi, local-network permission, phone 
 After sync, build the semantic index if that capability was selected:
 
 ```text
-/bin/sh <skill-root>/scripts/bootstrap.sh index
-/bin/sh <skill-root>/scripts/bootstrap.sh index-status
+<auday> index
+<auday> index-status
 ```
 
 Show actual record counts while indexing. A successful synthetic check before pairing does not imply that the user's archive has been indexed. If the phone is not available, finish the selected local setup and explain the single connection step still needed.
@@ -86,10 +105,10 @@ For a new environment, the integrated Whisper.cpp route supplies two executable 
 
 | Setup choice | Model download | When to begin here |
 | --- | ---: | --- |
-| `small` — Whisper small Q5_1 | 190.09 MB | Limited memory, an Intel Mac, or a lightweight first pass |
-| `turbo` — Whisper large-v3-turbo Q5_0 | 574.04 MB | A capable Mac and a task that warrants the larger multilingual model |
+| `small` — Whisper small Q5_1 | 190.09 MB | Limited memory, a CPU-first Windows workflow, or a lightweight first pass |
+| `turbo` — Whisper large-v3-turbo Q5_0 | 574.04 MB | Enough memory and a task that warrants the larger multilingual model |
 
-These are model downloads, not complete installed size or peak memory. The runtime, audio conversion tools, and any required dependencies are additional. Read the download sizes and model choices returned by `setup`, then explain the selected downloads before starting; a request to prepare transcription already authorizes the necessary setup. Do not install both models by default.
+These are model downloads, not complete installed size or peak memory. Windows installs an official prebuilt Whisper.cpp CPU runtime and a matching FFmpeg binary; it does not compile them or require a GPU. That audio runtime requires AVX2, FMA, and F16C CPU features. Check this capability before large audio downloads; a failed audio CPU check does not block ordinary connection, text sync, keyword retrieval, or readable exports. Mac builds the selected Whisper.cpp runtime with Apple tools. Read the download sizes and model choices returned by `setup`, then explain the selected downloads before starting; a request to prepare transcription already authorizes the necessary setup. Do not install both models by default.
 
 Allow room for extracted runtimes, build products, and resumable download caches.
 As a practical starting allowance, keep at least 1 GB free for semantic setup,
@@ -99,17 +118,15 @@ not measured peak memory or exact final disk sizes.
 Anonymous speaker diarization is included by default, with approximately 30 MB of speaker model files plus its runtime dependencies. If the user says “do not distinguish speakers,” pass `--no-diarize` during both setup and transcription so speaker weights and packages are not required or downloaded for that route.
 
 ```text
-/bin/sh <skill-root>/scripts/bootstrap.sh setup --audio --model small
-/bin/sh <skill-root>/scripts/bootstrap.sh transcribe --audio <local-audio> \
-  --output <new-private-output-directory> --language auto
+<auday> setup --audio --model small
+<auday> transcribe --audio <local-audio> --output <new-private-output-directory> --language auto
 ```
 
 For the explicit speaker opt-out:
 
 ```text
-/bin/sh <skill-root>/scripts/bootstrap.sh setup --audio --model small --no-diarize
-/bin/sh <skill-root>/scripts/bootstrap.sh transcribe --audio <local-audio> \
-  --output <new-private-output-directory> --language auto --no-diarize
+<auday> setup --audio --model small --no-diarize
+<auday> transcribe --audio <local-audio> --output <new-private-output-directory> --language auto --no-diarize
 ```
 
 Setup downloads and verifies the selected assets, configures their paths, and verifies the pipeline with a public sample recording. `transcribe` reuses that setup; it does not download missing models itself. Fix a missing prerequisite through setup instead of silently changing the task or dropping speaker labels.
@@ -130,10 +147,10 @@ At completion, give a compact capability report in the user's language:
 - Transcription not installed yet, or the selected route verified with the speaker preference.
 - Phone paired and synced, or the remaining phone/system action.
 
-Show useful local output locations separately from progress. User data defaults to `~/Library/Application Support/AudayWorkflow/`; each phone profile contains its persistent database and index. For an isolated environment use `--home <data-root>` and, when needed, `--profile <name>`. Both are global options before the command, with `--home` first:
+Show useful local output locations separately from progress. User data defaults to `~/Library/Application Support/AudayWorkflow/` on Mac and `%LOCALAPPDATA%\AudayWorkflow\` on Windows; each phone profile contains its persistent database and index. These are disk files the user can browse, not memory-only caches. For an isolated environment use `--home <absolute-data-root>` and, when needed, `--profile <name>`. Both are global options before the command, with `--home` first:
 
 ```text
-/bin/sh <skill-root>/scripts/bootstrap.sh --home <data-root> --profile <name> setup
+<auday> --home "<absolute-data-root>" --profile <name> setup
 ```
 
 Runtime readiness, synthetic validation, representative-audio quality, and physical-phone behavior are separate results. Report the evidence actually obtained.

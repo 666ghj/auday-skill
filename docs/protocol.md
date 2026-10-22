@@ -1,18 +1,20 @@
 # Local connection protocol
 
-This document describes the protocol consumed by the macOS client. The desktop repository does not contain the iPhone app or its data adapter. A synthetic loopback peer under `tests/native-peer` exercises the contract; it is not installed with the skill and does not certify physical wireless behavior.
+This document describes the unchanged iPhone protocol consumed by the macOS and Windows clients. The desktop repository does not contain the iPhone app or its data adapter. Synthetic loopback peers exercise the contract; they are not installed with the skill and do not certify physical wireless behavior. Adding a Windows client does not require changing the phone's scope or wire format.
 
 ## Discovery and authentication
 
 - Bonjour service: `_auday-link._tcp`, domain `local.`.
 - TLS PSK identity: `auday-workflow-link-v2`.
-- TLS version: 1.2 only; cipher: `TLS_ECDHE_PSK_WITH_CHACHA20_POLY1305_SHA256` (`0xccac`). No plaintext fallback, certificate-validation override, or early-data mode is used.
+- TLS version: 1.2 only; cipher: `TLS_ECDHE_PSK_WITH_CHACHA20_POLY1305_SHA256` (`0xccac`). No plaintext fallback or early-data mode is used. This suite authenticates peers with the pre-shared key and does not exchange X.509 certificates. The Windows SSL context disables certificate/hostname validation specifically for this sole PSK suite; it does not permit an unauthenticated certificate-based alternative.
 - The phone generates 16 uniformly selected symbols from `23456789ABCDEFGHJKLMNPQRSTUVWXYZ`. This is 80 bits of entropy. Group separators and case are normalized.
 - HKDF-SHA256 derives a 32-byte key using salt `auday-workflow-link-v2` and info `tls-psk`. Derivation does not add entropy or turn this into a password-authenticated key-exchange protocol.
 
 Use a generated secret, not a short human password. Possession of the shared secret grants the currently selected scope. This version has no per-computer authentication or revocation. Discovery metadata is unauthenticated until the handshake completes.
 
-The local client stores secrets in macOS Keychain. It does not store them in the JSON connection file, SQLite cache, or a command argument. Test interfaces accept synthetic secrets through process stdin solely for automated validation.
+The Mac client uses its native Swift/Network bridge and stores secrets in macOS Keychain. The Windows client uses managed Python 3.13 TLS-PSK with OpenSSL, discovers the same Bonjour service with `zeroconf`, and stores secrets in Windows Credential Manager under the current user with local-machine persistence. Both enforce the same identity, derivation, TLS version, cipher, and framing. Windows does not implement Apple's peer-to-peer Wi-Fi extension; the normal shared-LAN path is supported.
+
+Neither client stores secrets in the JSON connection file, SQLite cache, or a command argument. Windows pairing reads the user's password from a real local console without echo and refuses piped password input; `pair-window` launches that user-facing console. Mac uses its local prompt. Test interfaces accept synthetic secrets through process stdin solely for automated validation; they are not a user credential-entry path.
 
 ## Framing and operations
 
@@ -90,7 +92,7 @@ Before downloading such an asset, the client sends `prepareAudio` with `id` and 
 
 The phone maintains a bounded preparation cache. If an entry was evicted during transfer, the client may prepare it once more and continue only if its hash and size still match. Changed sources or snapshots stop the download for an explicit resync.
 
-When present, `snapshotCapturedAt` and `snapshotCurrent` describe the phone's source snapshot independently of the Mac's `syncedAt`. The client performs one final plain `status` check, without a lease or another preparation. It preserves the original capture time and reports `sourceSnapshotCurrent: true` only if the device, snapshot, and scope match and the final flag is the boolean `true`. A newer generation, unavailable status, or missing/invalid flag yields false. This reflects the completion check, not a promise that the phone remains unchanged afterward.
+When present, `snapshotCapturedAt` and `snapshotCurrent` describe the phone's source snapshot independently of the computer's `syncedAt`. The client performs one final plain `status` check, without a lease or another preparation. It preserves the original capture time and reports `sourceSnapshotCurrent: true` only if the device, snapshot, and scope match and the final flag is the boolean `true`. A newer generation, unavailable status, or missing/invalid flag yields false. This reflects the completion check, not a promise that the phone remains unchanged afterward.
 
 ## Scopes and snapshots
 
@@ -116,11 +118,11 @@ Records use stable `id` values and one of `transcript`, `highlight`, `summary`, 
 
 An on-demand catalogue entry contains its `id`, `preparation: "on-demand"`, and `contentRevision`, with available source timing metadata. Prepared or eager assets include `mime`, `size`, `sha256`, duration, and timeline spans when available. Catalogue metadata does not mean the file has been prepared or downloaded. The test peer's `path` is local to its export root and never sent to the client. A timeline span maps `fileStart`/`fileEnd` seconds to a timezone-aware `recordedStart`; gaps must not be compressed into invented wall-clock continuity.
 
-Do not include API keys, Keychain items, internal configuration, or unrelated files in the projection. “All text” refers to authorized Auday business data, not the entire application container.
+Do not include API keys, OS credential-store items, internal configuration, or unrelated files in the projection. “All text” refers to authorized Auday business data, not the entire application container.
 
 ## Current limits
 
-- macOS is the supported desktop runtime. Windows/Linux clients are not implemented.
+- The desktop setup baseline is macOS 13+ (13.3+ for the pinned semantic runtime) and Windows 10/11 x64. Windows ARM64 and Linux are not part of this baseline.
 - Physical Apple peer-to-peer Wi-Fi, background transfer, energy use, and router compatibility need device tests.
 - The reference app workflow is foreground-bound; a network request cannot generally wake a suspended iPhone app.
 - The cache is user-private but is not an independently encrypted database. Use OS account and storage protections.

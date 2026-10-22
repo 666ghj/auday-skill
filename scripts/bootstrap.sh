@@ -43,10 +43,10 @@ fi
 
 /bin/mkdir -p "$auday_data_root"
 auday_data_root=$(CDPATH= cd -P -- "$auday_data_root" && pwd)
-auday_row=$(/usr/bin/awk -F '\t' -v arch="$auday_arch" '$1=="uv" && $2==arch {print}' "$auday_script_dir/runtime-assets.tsv")
+auday_row=$(/usr/bin/awk -F '\t' -v arch="$auday_arch" '$1=="uv" && $2==arch && $10=="macos" {print}' "$auday_script_dir/runtime-assets.tsv")
 [ -n "$auday_row" ] || { printf '%s\n' 'Auday: runtime manifest entry missing.' >&2; exit 1; }
 auday_tab=$(printf '\t')
-IFS="$auday_tab" read -r auday_component auday_manifest_arch auday_url auday_sha auday_bytes auday_install_dir auday_archive_root auday_executable auday_min_os <<EOF
+IFS="$auday_tab" read -r auday_component auday_manifest_arch auday_url auday_sha auday_bytes auday_install_dir auday_archive_root auday_executable auday_min_os auday_platform auday_archive_format <<EOF
 $auday_row
 EOF
 auday_uv_dir="$auday_data_root/runtime/$auday_install_dir"

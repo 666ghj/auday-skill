@@ -4,23 +4,43 @@ Validate the installed package, then test a compatible Auday iPhone build separa
 
 ## Clean runtime setup
 
-Use a newly installed copy of the skill and a new empty private data root. Do not seed it with models, package caches, a database, pairing, or configuration from a developer's working installation. Record OS/architecture and any system developer tools already present. An isolated data root on a developer Mac is not a factory-reset Mac.
+Use a newly installed copy of the skill and a new empty private data root. Do not seed it with models, package caches, a database, pairing, or configuration from a developer's working installation. Record OS/architecture and any system tools already present. An isolated data root on a developer computer is not a factory-reset OS. Use the entrypoint for the platform being tested; do not infer Windows behavior from a Mac run.
 
-Limit command lookup to macOS system tools so Homebrew and other developer-installed executables cannot satisfy requirements accidentally:
+On macOS, limit command lookup to system tools so Homebrew and other developer-installed executables cannot satisfy requirements accidentally:
 
 ```text
 env PATH=/usr/bin:/bin:/usr/sbin:/sbin \
-  /bin/sh <installed-skill>/scripts/bootstrap.sh --home <empty-data-root> check
+  /bin/sh "<installed-skill>/scripts/bootstrap.sh" --home "<absolute-empty-data-root>" check
 env PATH=/usr/bin:/bin:/usr/sbin:/sbin \
-  /bin/sh <installed-skill>/scripts/bootstrap.sh --home <empty-data-root> doctor
+  /bin/sh "<installed-skill>/scripts/bootstrap.sh" --home "<absolute-empty-data-root>" doctor
 env PATH=/usr/bin:/bin:/usr/sbin:/sbin \
-  /bin/sh <installed-skill>/scripts/bootstrap.sh --home <empty-data-root> setup
+  /bin/sh "<installed-skill>/scripts/bootstrap.sh" --home "<absolute-empty-data-root>" setup
+```
+
+On Windows 10/11 x64, use Windows PowerShell 5.1 from the installed package:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<installed-skill>\scripts\bootstrap.ps1" --home "<absolute-empty-data-root>" check
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<installed-skill>\scripts\bootstrap.ps1" --home "<absolute-empty-data-root>" doctor
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<installed-skill>\scripts\bootstrap.ps1" --home "<absolute-empty-data-root>" setup
+```
+
+The execution-policy flag applies only to each child process. Verify the persistent policy was not changed. Windows must use private Python 3.13.16 and the connection environment under `runtime/windows-link/venv/Scripts/python.exe`. macOS keeps private Python 3.12.15 and its native Swift bridge. In hosted acceptance, put failing sentinels ahead of global Python, uv, FFmpeg, and Whisper commands and verify no sentinel was executed. A test harness may use the runner's Python for packaging/assertions; the installed skill must not borrow it.
+
+For each platform, replace `<auday>` below with its full bootstrap prefix and `--home` argument. These opt-in commands download real assets:
+
+```text
+<auday> setup --defer-semantic
+<auday> setup
+<auday> setup --semantic
+<auday> setup --audio --model small --no-diarize
+<auday> setup --audio --model small
 ```
 
 Verify the following without reading personal Auday data:
 
 - `check` succeeds without Python, does not download, and reports capability prerequisites.
-- The first real setup obtains its private `uv` and managed Python under the isolated data root. It does not depend on a global Python, Homebrew, or pre-existing model paths.
+- The first real setup obtains private `uv` and managed Python under the isolated data root. It does not depend on a global Python, Homebrew, WSL, MSVC installation, or pre-existing model paths.
 - A new installation shows the semantic recommendation and the expected unpaired/empty-library state.
 - Deferring semantic setup records the choice; another setup invocation respects it without downloading weights or repeating the recommendation. A later explicit semantic request still works.
 - Selected semantic setup downloads the pinned runtime/model, verifies hashes, saves usable local paths, and passes synthetic inference. Run again to check reuse of verified assets.
@@ -29,7 +49,11 @@ Verify the following without reading personal Auday data:
 - The configured `transcribe` command uses installed assets, creates a new output directory, and does not trigger a surprise download.
 - Progress exposes download bytes and observable preparation stages while final stdout remains valid JSON. Unknown-duration inference stages must not invent a percentage.
 
-Use synthetic text and audio for these checks. Passing setup or a synthetic pipeline does not establish language accuracy, speaker quality on meetings, physical-phone connectivity, or performance on another Mac.
+Use synthetic text and the public audio sample for these checks. Passing setup or a synthetic pipeline does not establish language accuracy, speaker quality on meetings, physical-phone connectivity, or performance on another computer.
+
+On Windows, verify CPU semantic inference binds only `127.0.0.1`, rejects requests without the ephemeral token, and cleans up its process and temporary key file. Verify prebuilt Whisper.cpp/FFmpeg and default sherpa-onnx run without a compiler or GPU. Credential Manager integration, the user-facing console, and Windows Firewall behavior need Windows tests; a mocked store or Mac subprocess test is separate evidence.
+
+Record AVX2, FMA, and F16C availability for Windows audio acceptance. The official Whisper.cpp CPU binary requires these features. Verify that a failing audio CPU prerequisite stops before model downloads while core connection and text commands remain available. Also verify semantic/audio setup provides its required Microsoft runtime DLLs beside the private engine without depending on a pre-installed system runtime.
 
 For the missing Xcode Command Line Tools branch, verify a real fresh macOS account/VM or use an explicit prerequisite test fixture and label which was used. The agent should explain and launch the system installation path, then recheck; a mock cannot prove Apple's dialogs or installation completed. Check supported Intel and Apple Silicon routes separately before claiming both have been run. macOS 13 core behavior and the semantic runtime's macOS 13.3 minimum are separate boundaries.
 
@@ -38,7 +62,7 @@ For the missing Xcode Command Line Tools branch, verify a real fresh macOS accou
 - Record the skill version and phone app version in private test notes.
 - Confirm the phone has **Connect to your workflow**. If it does not, install a compatible build before testing; the skill cannot enable this remotely.
 - Use the same reachable LAN first. Disable no system security protections just to make discovery pass.
-- Run `bootstrap.sh doctor` from the installed skill directory, not from a development checkout.
+- Run `doctor` through the platform's installed bootstrap entrypoint, not from a development checkout.
 - Keep real test notes, recordings, IP addresses, device IDs, credentials, and screenshots outside the repository.
 
 ## First connection
@@ -51,6 +75,8 @@ For the missing Xcode Command Line Tools branch, verify a real fresh macOS accou
 6. Change the phone to **Text and audio**, reopen access, and synchronize again.
 7. Download one selected recording. Verify its hash, duration, availability, and timeline mapping.
 
+On Windows, confirm that `pair-window` opens a separate local console, password entry is not echoed, and the agent receives only `awaiting_local_password_input` while waiting. That state does not prove successful pairing. Check successful authentication afterward with `status --live`, and confirm the saved secret belongs to the current user's Credential Manager rather than the JSON profile. On Mac, verify the corresponding local prompt and Keychain behavior. Keep actual secrets out of test notes and screenshots.
+
 ## Recovery and lifecycle
 
 - Use an incorrect password and confirm no record metadata is returned.
@@ -58,14 +84,14 @@ For the missing Xcode Command Line Tools branch, verify a real fresh macOS accou
 - Close the phone page and confirm cached queries still work while live requests fail or wait explicitly.
 - Change the password and confirm the old password cannot read new data.
 - Change the access scope and confirm the next sync reflects it. Existing copies should not be silently erased.
-- Lock the phone, switch apps, disconnect Wi-Fi, and sleep the Mac. Record the actual outcomes rather than assuming background support.
+- Lock the phone, switch apps, disconnect Wi-Fi, and sleep the computer. Record the actual outcomes rather than assuming background support.
 - During a sync, add a recording and finish a transcription. Confirm that the transfer finishes with its original snapshot, reports its capture time, and includes the new saved content only after another explicit sync. A stale final flag must not trigger an automatic repeat.
 - Start two transfers for the same local profile and verify that the second waits; start a different profile and verify it remains independent. Check that an older audio preparation cannot overwrite a newer catalogue.
 - With a lease-capable phone, start an update from another computer while the first transfer is active. Confirm that each transfer keeps its selected generation and that completion/failure releases its lease. Keep this device observation separate from synthetic concurrency tests.
 
 ## Wireless and no-cloud claims
 
-Test LAN first, then separately test Apple peer-to-peer discovery without a shared access point. Simulator loopback is not wireless evidence. For a no-cloud transport claim, disable WAN access or inspect the actual connection path while discovery, pairing, sync, and local queries complete. AI inference is a separate data-flow question.
+Test the shared LAN on each desktop OS. On Mac only, separately test Apple peer-to-peer discovery without a shared access point; Windows must reject that option. Simulator or CI loopback is not wireless evidence. On Windows, test permitted Bonjour discovery and an explicit host/port fallback when multicast is unavailable; neither may bypass authentication or require disabling the firewall. For a no-cloud transport claim, disable WAN access or inspect the actual connection path while discovery, pairing, sync, and local queries complete. AI inference is a separate data-flow question.
 
 ## Optional audio analysis
 
