@@ -32,20 +32,24 @@ class AudioRunnerTests(unittest.TestCase):
         for path in (self.model, self.segmentation, self.embedding):
             path.write_bytes(b"synthetic-model")
         self.output = self.root / "result"
+        self.texts = ["First voice", "Second voice"]
         self.arguments = [
             "refine_audio.py", "--audio", str(self.audio),
             "--model", str(self.model), "--output", str(self.output),
         ]
 
     def synthetic_process(self, command, **kwargs):
+        def child_path(value):
+            path = Path(value)
+            return Path(kwargs["cwd"]) / path if kwargs.get("cwd") and not path.is_absolute() else path
         if command[0] == "ffmpeg":
-            shutil.copyfile(self.audio, command[-1])
+            shutil.copyfile(self.audio, child_path(command[-1]))
         elif command[0] == "whisper-cli":
             prefix = command[command.index("-of") + 1]
-            Path(prefix + ".json").write_text(json.dumps({
+            child_path(prefix + ".json").write_text(json.dumps({
                 "transcription": [
-                    {"offsets": {"from": 0, "to": 1000}, "text": "First voice"},
-                    {"offsets": {"from": 1000, "to": 2000}, "text": "Second voice"},
+                    {"offsets": {"from": 0, "to": 1000}, "text": self.texts[0]},
+                    {"offsets": {"from": 1000, "to": 2000}, "text": self.texts[1]},
                 ],
             }))
         else:
@@ -149,6 +153,42 @@ class AudioRunnerTests(unittest.TestCase):
         self.assertEqual(json.loads(stream.getvalue())["error"], "local_diarization_weights_missing")
         processes.assert_not_called()
         self.assertFalse(self.output.exists())
+
+    def test_windows_unicode_output_uses_ascii_native_arguments_and_utf8_results(self):
+        self.output = self.root / "录音 日本語 output"
+        self.arguments[-1] = str(self.output)
+        self.texts = ["今天讨论项目。", "明日の予定です。"]
+        source = self.audio.read_bytes()
+        with patch.object(refine_audio, "is_windows", return_value=True):
+            reply, processes = self.execute(["--no-diarize"])
+        self.assertTrue(reply["ok"])
+        self.assertEqual(self.audio.read_bytes(), source)
+        for call in processes.call_args_list:
+            command = call.args[0]
+            self.assertEqual(call.kwargs["cwd"], self.output.resolve())
+            for argument in command:
+                self.assertTrue(argument.isascii(), argument)
+        self.assertFalse(list(self.output.glob(".native-*")))
+        self.assertIn(self.texts[0], (self.output / "transcript.md").read_text(encoding="utf-8"))
+        self.assertIn(self.texts[1], (self.output / "result.json").read_text(encoding="utf-8"))
+
+    def test_windows_cross_volume_aliases_are_removed_after_failure(self):
+        self.output.mkdir()
+        source = self.model.read_bytes()
+        previous = Path.cwd()
+        with patch.object(refine_audio, "is_windows", return_value=True), \
+                patch.object(refine_audio.os, "link", side_effect=OSError("different volume")):
+            with self.assertRaisesRegex(RuntimeError, "synthetic failure"):
+                with refine_audio._native_inputs({"model": self.model}, self.output) as native:
+                    with refine_audio._working_directory(native["cwd"]):
+                        self.assertFalse(Path(native["model"]).is_absolute())
+                        self.assertTrue(native["model"].isascii())
+                        self.assertEqual(Path(native["model"]).read_bytes(), source)
+                        raise RuntimeError("synthetic failure")
+        self.assertEqual(Path.cwd(), previous)
+        self.assertEqual(self.model.read_bytes(), source)
+        self.assertFalse(list(self.output.glob(".native-*")))
+
 
 
 if __name__ == "__main__":

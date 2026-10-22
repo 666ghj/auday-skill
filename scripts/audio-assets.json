@@ -56,10 +56,94 @@
   },
   "runtimePackages": {
     "lockfile": "uv.lock",
-    "python": "3.12.15",
+    "python": {
+      "macos": "3.12.15",
+      "windows": "3.13.16"
+    },
     "cmake": "3.31.6",
     "imageio-ffmpeg": "0.6.0",
     "sherpa-onnx": "1.13.5",
-    "notes": "Packages and wheel hashes are pinned in uv.lock. imageio-ffmpeg includes its own ffmpeg binary; no Homebrew or global ffmpeg is used. See installed wheel license files for the wrapper and bundled ffmpeg licenses."
+    "notes": "Packages and wheel hashes are pinned in uv.lock. Windows uses CPython 3.13.16 and macOS uses 3.12.15; CMake is macOS-only. imageio-ffmpeg includes its own platform-specific ffmpeg binary; no global ffmpeg is used. See installed wheel license files for the wrapper and bundled ffmpeg licenses."
+  },
+  "whisperWindows": {
+    "name": "whisper.cpp v1.7.6 Windows x64 CPU",
+    "revision": "a8d002cfd879315632a579e73f0148d06959de36",
+    "url": "https://github.com/ggml-org/whisper.cpp/releases/download/v1.7.6/whisper-bin-x64.zip",
+    "sha256": "0d2eca299c248f965bd0341bcb219db4b433c7f0c0ce2200d4df85765e8156a9",
+    "size": 3675974,
+    "directory": "whisper-windows-v1.7.6-vc14.44.35211",
+    "executable": "Release/whisper-cli.exe",
+    "license": "MIT",
+    "licenseURL": "https://github.com/ggml-org/whisper.cpp/blob/a8d002cfd879315632a579e73f0148d06959de36/LICENSE",
+    "files": [
+      {
+        "member": "Release/whisper-cli.exe",
+        "filename": "whisper-cli.exe",
+        "sha256": "b7c6dc2e999a80bc2d23cd4c76701211f392ae55d5cabdf0d45eb2ca4faf09af",
+        "size": 480256
+      },
+      {
+        "member": "Release/whisper.dll",
+        "filename": "whisper.dll",
+        "sha256": "bbeceed370799687a363244edc583bac3dc5d472f5bd14691a26f22c7e710bb8",
+        "size": 482304
+      },
+      {
+        "member": "Release/ggml.dll",
+        "filename": "ggml.dll",
+        "sha256": "f91ef57cfd6d2f07a5fc33e5dca114b3dc3abe8495f47b46dfbe178d6d775c37",
+        "size": 67072
+      },
+      {
+        "member": "Release/ggml-base.dll",
+        "filename": "ggml-base.dll",
+        "sha256": "e912e19071c32d673a81de4aab058d36328cc6b0c59c75889a0ba4c65fd6a4e6",
+        "size": 497664
+      },
+      {
+        "member": "Release/ggml-cpu.dll",
+        "filename": "ggml-cpu.dll",
+        "sha256": "341ed96e2520ef9b44509f18b5ac4f60d171e47a6c55ab390d704ea7b06ae617",
+        "size": 503808
+      }
+    ],
+    "notes": "Official CPU prebuilt. No CUDA, GPU, compiler, or system-wide runtime installation. Keep its DLLs next to whisper-cli.exe."
+  },
+  "windowsRuntime": {
+    "name": "Microsoft Visual C++ x64 runtime 14.44.35211",
+    "url": "https://download.visualstudio.microsoft.com/download/pr/45d3b8dd-bced-4b37-9974-142f748d710c/4aaf54db0bfc9435f7c3660e1a00237a4b556042bfeea64bde44c2e0194e6ee5/Microsoft.VC.14.44.17.14.CRT.Redist.X64.base.vsix",
+    "sha256": "4aaf54db0bfc9435f7c3660e1a00237a4b556042bfeea64bde44c2e0194e6ee5",
+    "size": 3224191,
+    "license": "Microsoft Visual Studio Redistributable Code",
+    "licenseURL": "https://visualstudio.microsoft.com/license-terms/vs2022-cruntime/",
+    "sourceDocumentation": "https://learn.microsoft.com/en-us/cpp/windows/deployment-in-visual-cpp",
+    "files": [
+      {
+        "member": "Contents/VC/Redist/MSVC/14.44.35112/x64/Microsoft.VC143.CRT/vcruntime140.dll",
+        "filename": "vcruntime140.dll",
+        "sha256": "d5e4d9a3e835fa679450145d6a7d94e36573a509317111904d9b3712c30d9066",
+        "size": 124544
+      },
+      {
+        "member": "Contents/VC/Redist/MSVC/14.44.35112/x64/Microsoft.VC143.CRT/msvcp140.dll",
+        "filename": "msvcp140.dll",
+        "sha256": "0f885b509a685d2bbfa652fed26b5fb31d88fbdab0a978c641d1c7b8aa460aa9",
+        "size": 557728
+      },
+      {
+        "member": "Contents/VC/Redist/MSVC/14.44.35112/x64/Microsoft.VC143.CRT/vcruntime140_1.dll",
+        "filename": "vcruntime140_1.dll",
+        "sha256": "1f2d41c4aa5db0bc33ebf7b66d72943a817d7ce6cbe880502a9403823633093f",
+        "size": 49792
+      },
+      {
+        "member": "Contents/VC/Redist/MSVC/14.44.35112/x64/Microsoft.VC143.OpenMP/vcomp140.dll",
+        "filename": "vcomp140.dll",
+        "sha256": "55aba23cdcd6484fbb06f4155b8ca75adfce7a881f10afd0c49457165e677164",
+        "size": 193152
+      }
+    ],
+    "notes": "Download the official VSIX privately and install only these four release DLLs beside Whisper. Do not copy debug_nonredist or LLVM OpenMP files. Windows 10/11 provides the Universal CRT. No DLLs are redistributed in this repository.",
+    "redistributionDocumentation": "https://learn.microsoft.com/en-us/visualstudio/releases/2022/redistribution"
   }
 }

@@ -3,10 +3,12 @@
 Weights must already exist locally. Results are derivatives; no phone write-back.
 """
 
-import argparse, hashlib, json, math, os, shutil, subprocess, sys, time, wave
+import argparse, hashlib, json, math, os, shutil, subprocess, sys, tempfile, time, wave
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from progress import report
+from platform_utils import is_windows
 
 
 def digest(path):
@@ -68,6 +70,49 @@ def source_spans(start, end, timeline):
     return spans
 
 
+@contextmanager
+def _native_inputs(paths, output):
+    """Give narrow-path Windows engines ASCII names without changing source files.
+
+    CreateProcess accepts a Unicode working directory. Relative ASCII names then
+    work even when the user's home/output path is outside the system code page.
+    Hard links avoid copying large models; another volume gets a temporary copy.
+    """
+    native = {name: str(path) for name, path in paths.items() if path is not None}
+    native["cwd"] = None
+    if not is_windows():
+        yield native
+        return
+    with tempfile.TemporaryDirectory(prefix=".native-", dir=output) as temporary:
+        directory = Path(temporary)
+        for name, source in paths.items():
+            if source is None:
+                continue
+            alias = directory / (name + ".bin")
+            try:
+                os.link(source, alias)
+            except OSError:
+                # Source files may be on another drive or a non-NTFS filesystem.
+                shutil.copyfile(source, alias)
+            native[name] = str(Path(directory.name) / alias.name)
+        native["cwd"] = output
+        yield native
+
+
+@contextmanager
+def _working_directory(directory):
+    """Limit relative Sherpa model paths to this single-job runner process."""
+    if directory is None:
+        yield
+        return
+    previous = Path.cwd()
+    os.chdir(directory)
+    try:
+        yield
+    finally:
+        os.chdir(previous)
+
+
 def run(args):
     os.umask(0o077)
     report("Preparing local audio analysis", force=True)
@@ -76,6 +121,7 @@ def run(args):
     out = args.output.expanduser().resolve()
     if not audio.is_file() or not model.is_file():
         raise ValueError("audio_and_local_model_required; no automatic downloads")
+    segmentation = embedding = None
     if args.diarize:
         if not args.segmentation_model or not args.embedding_model:
             raise ValueError(
@@ -97,10 +143,20 @@ def run(args):
     if not shutil.which(ffmpeg) or not shutil.which(whisper_cli):
         raise ValueError("ffmpeg_and_whisper_cli_required")
     out.mkdir(parents=True, exist_ok=False)
+    with _native_inputs({
+        "audio": audio, "model": model,
+        "segmentation": segmentation, "embedding": embedding,
+    }, out) as native:
+        _analyze(args, audio, model, out, ffmpeg, whisper_cli, native)
+
+
+def _analyze(args, audio, model, out, ffmpeg, whisper_cli, native):
     started = time.perf_counter()
     fingerprint = digest(audio)
+    if native["cwd"] and digest(out / native["audio"]) != fingerprint:
+        raise ValueError("source_audio_changed_while_preparing_native_inputs")
     asset_path = args.asset_metadata or audio.with_suffix(".asset.json")
-    asset = json.loads(asset_path.read_text()) if asset_path.is_file() else {}
+    asset = json.loads(asset_path.read_text(encoding="utf-8")) if asset_path.is_file() else {}
     if asset and asset.get("sha256") != fingerprint:
         raise ValueError("asset_source_hash_mismatch")
     wav = out / "prepared.wav"
@@ -112,16 +168,16 @@ def run(args):
             "error",
             "-nostdin",
             "-i",
-            str(audio),
+            native["audio"],
             "-ar",
             "16000",
             "-ac",
             "1",
             "-c:a",
             "pcm_s16le",
-            str(wav),
+            "prepared.wav" if native["cwd"] else str(wav),
         ],
-        check=True,
+        cwd=native["cwd"], check=True, timeout=1800,
     )
     with wave.open(str(wav)) as inp:
         duration = inp.getnframes() / inp.getframerate()
@@ -131,28 +187,28 @@ def run(args):
         )
     report("Audio preparation complete")
     report("Transcribing audio with Whisper.cpp")
-    with (out / "engine.log").open("w") as log:
+    with (out / "engine.log").open("w", encoding="utf-8") as log:
         subprocess.run(
             [
                 whisper_cli,
                 "-m",
-                str(model),
+                native["model"],
                 "-f",
-                str(wav),
+                "prepared.wav" if native["cwd"] else str(wav),
                 "-l",
                 args.language,
                 "-t",
                 str(args.threads),
                 "-ojf",
                 "-of",
-                str(out / "whisper"),
+                "whisper" if native["cwd"] else str(out / "whisper"),
                 "-np",
             ],
             stdout=log,
             stderr=log,
-            check=True,
+            cwd=native["cwd"], check=True, timeout=21600,
         )
-    raw = json.loads((out / "whisper.json").read_text())
+    raw = json.loads((out / "whisper.json").read_text(encoding="utf-8"))
     segments = []
     for index, row in enumerate(raw.get("transcription", [])):
         left = float(row["offsets"]["from"]) / 1000
@@ -182,44 +238,47 @@ def run(args):
     diarization = {"status": "not_requested"}
     if args.diarize:
         report("Identifying anonymous speaker turns")
-        config = sherpa_onnx.OfflineSpeakerDiarizationConfig(
-            segmentation=sherpa_onnx.OfflineSpeakerSegmentationModelConfig(
-                pyannote=sherpa_onnx.OfflineSpeakerSegmentationPyannoteModelConfig(
-                    model=str(segmentation)
+        import sherpa_onnx
+        import soundfile as sf
+        with _working_directory(native["cwd"]):
+            config = sherpa_onnx.OfflineSpeakerDiarizationConfig(
+                segmentation=sherpa_onnx.OfflineSpeakerSegmentationModelConfig(
+                    pyannote=sherpa_onnx.OfflineSpeakerSegmentationPyannoteModelConfig(
+                        model=native["segmentation"]
+                    ),
+                    num_threads=args.threads,
+                    provider="cpu",
                 ),
-                num_threads=args.threads,
-                provider="cpu",
-            ),
-            embedding=sherpa_onnx.SpeakerEmbeddingExtractorConfig(
-                model=str(embedding), num_threads=args.threads, provider="cpu"
-            ),
-            clustering=sherpa_onnx.FastClusteringConfig(
-                num_clusters=args.speakers or -1, threshold=0.5
-            ),
-            min_duration_on=0.3,
-            min_duration_off=0.5,
-        )
-        if not config.validate():
-            raise ValueError("invalid_diarization_config")
-        engine = sherpa_onnx.OfflineSpeakerDiarization(config)
-        samples, rate = sf.read(wav, dtype="float32")
-        if rate != engine.sample_rate:
-            raise ValueError("diarization_sample_rate_mismatch")
-        mapping = {}
-        for row in engine.process(samples).sort_by_start_time():
-            left = max(0, float(row.start))
-            right = min(duration, float(row.end))
-            if not math.isfinite(left + right) or right <= left:
-                continue
-            label = mapping.setdefault(row.speaker, f"speaker_{len(mapping) + 1:02d}")
-            turns.append({"start": left, "end": right, "speaker": label})
+                embedding=sherpa_onnx.SpeakerEmbeddingExtractorConfig(
+                    model=native["embedding"], num_threads=args.threads, provider="cpu"
+                ),
+                clustering=sherpa_onnx.FastClusteringConfig(
+                    num_clusters=args.speakers or -1, threshold=0.5
+                ),
+                min_duration_on=0.3,
+                min_duration_off=0.5,
+            )
+            if not config.validate():
+                raise ValueError("invalid_diarization_config")
+            engine = sherpa_onnx.OfflineSpeakerDiarization(config)
+            samples, rate = sf.read(wav, dtype="float32")
+            if rate != engine.sample_rate:
+                raise ValueError("diarization_sample_rate_mismatch")
+            mapping = {}
+            for row in engine.process(samples).sort_by_start_time():
+                left = max(0, float(row.start))
+                right = min(duration, float(row.end))
+                if not math.isfinite(left + right) or right <= left:
+                    continue
+                label = mapping.setdefault(row.speaker, f"speaker_{len(mapping) + 1:02d}")
+                turns.append({"start": left, "end": right, "speaker": label})
         attach_speakers(segments, turns)
         diarization = {
             "status": "completed",
             "engine": "sherpa-onnx",
             "version": sherpa_onnx.__version__,
-            "segmentationSHA256": digest(segmentation),
-            "embeddingSHA256": digest(embedding),
+            "segmentationSHA256": digest(args.segmentation_model.expanduser().resolve()),
+            "embeddingSHA256": digest(args.embedding_model.expanduser().resolve()),
             "speakerCount": len(mapping),
             "requestedSpeakerCount": args.speakers,
             "identityScope": "anonymous-within-this-asset",
@@ -256,7 +315,7 @@ def run(args):
         ],
     }
     (out / "result.json").write_text(
-        json.dumps(result, ensure_ascii=False, indent=2) + "\n"
+        json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     lines = [
         "# Auday · Local audio analysis",
@@ -271,7 +330,7 @@ def run(args):
         stamp = f"{int(row['start'] // 60):02d}:{row['start'] % 60:05.2f}"
         speaker = f"{row['speaker']}：" if args.diarize else ""
         lines.append(f"- [{stamp}] {speaker}{row['text']}")
-    (out / "transcript.md").write_text("\n".join(lines) + "\n")
+    (out / "transcript.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     report("Local audio analysis complete")
     print(
         json.dumps(
