@@ -107,7 +107,13 @@
         "size": 503808
       }
     ],
-    "notes": "Official CPU prebuilt. No CUDA, GPU, compiler, or system-wide runtime installation. Keep its DLLs next to whisper-cli.exe."
+    "notes": "Official CPU prebuilt. No CUDA, GPU, compiler, or system-wide runtime installation. Keep its DLLs next to whisper-cli.exe.",
+    "cpuRequirements": [
+      "AVX2",
+      "FMA",
+      "F16C"
+    ],
+    "cpuRequirementSource": "https://github.com/ggml-org/whisper.cpp/blob/v1.7.6/ggml/src/ggml-cpu/CMakeLists.txt"
   },
   "windowsRuntime": {
     "name": "Microsoft Visual C++ x64 runtime 14.44.35211",

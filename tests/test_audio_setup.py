@@ -77,6 +77,7 @@ class AudioSetupTests(unittest.TestCase):
                          side_effect=[str(self.ffmpeg), str(self.cmake)]),
             patch.object(audio_setup, "_run_transcription", side_effect=run_transcription),
             patch.object(audio_setup, "venv_python", return_value=self.python),
+            patch.object(audio_setup, "_check_windows_audio_cpu"),
         ]
         self.mocks = [p.start() for p in self.patches]
         for p in self.patches:
@@ -227,6 +228,16 @@ class AudioSetupTests(unittest.TestCase):
         self.assertNotIn("--extra", self.mocks[4].call_args[0][0])
         self.mocks[3].assert_not_called()
 
+    def test_windows_unsupported_audio_cpu_stops_before_downloads(self):
+        self.mocks[8].side_effect = RuntimeError("windows_audio_requires_avx2_cpu")
+        with patch.object(audio_setup.platform, "system", return_value="Windows"), \
+                patch.object(audio_setup.platform, "machine", return_value="AMD64"):
+            with self.assertRaisesRegex(RuntimeError, "audio_requires_avx2"):
+                audio_setup.setup_audio(self.root)
+        self.shared.ensure_uv.assert_not_called()
+        self.shared.download_asset.assert_not_called()
+        self.mocks[4].assert_not_called()
+
     def test_unsupported_host_stops_before_installation(self):
         with patch.object(audio_setup.platform, "system", return_value="Windows"), \
                 patch.object(audio_setup.platform, "machine", return_value="ARM64"):
@@ -336,6 +347,23 @@ class WindowsVerificationAssetTests(unittest.TestCase):
                 shared.download_asset.reset_mock()
                 self.assertEqual(audio_setup._ensure_source(runtime, windows=True), source)
                 shared.download_asset.assert_not_called()
+
+
+class WindowsAudioCPUCheckTests(unittest.TestCase):
+    def test_supported_avx2_uses_official_feature_id(self):
+        library = Mock()
+        library.IsProcessorFeaturePresent.return_value = 1
+        with patch.object(audio_setup.ctypes, "WinDLL", create=True, return_value=library) as load:
+            audio_setup._check_windows_audio_cpu()
+        load.assert_called_once_with("kernel32", use_last_error=True)
+        library.IsProcessorFeaturePresent.assert_called_once_with(40)
+
+    def test_missing_avx2_error_keeps_text_features_available(self):
+        library = Mock()
+        library.IsProcessorFeaturePresent.return_value = 0
+        with patch.object(audio_setup.ctypes, "WinDLL", create=True, return_value=library):
+            with self.assertRaisesRegex(RuntimeError, "text synchronization and export remain available"):
+                audio_setup._check_windows_audio_cpu()
 
 
 class AudioProcessLifecycleTests(unittest.TestCase):

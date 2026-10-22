@@ -1,5 +1,6 @@
 """On-demand, isolated macOS and Windows audio setup; no import-time downloads."""
 
+import ctypes
 import json
 import os
 from pathlib import Path
@@ -144,6 +145,22 @@ def _check_build_tools(env):
     return clang
 
 
+def _check_windows_audio_cpu():
+    """Check the OS-enabled AVX2 feature before downloading the pinned CPU engine."""
+    # Official feature ID 40 is PF_AVX2_INSTRUCTIONS_AVAILABLE:
+    # https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-isprocessorfeaturepresent
+    # The upstream x64 build also requires FMA/F16C (recorded in the manifest).
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    supports = kernel.IsProcessorFeaturePresent
+    supports.argtypes = [ctypes.c_uint]
+    supports.restype = ctypes.c_int
+    if not supports(40):
+        raise RuntimeError(
+            "windows_audio_requires_avx2_cpu; this local audio engine also requires "
+            "FMA and F16C; connection, text synchronization and export remain available"
+        )
+
+
 def _download_model(asset, directory, label):
     from setup_runtime import download_asset
     return download_asset(
@@ -286,6 +303,8 @@ def setup_audio(root, model="small", diarize=True, *, uv_path=None):
         raise RuntimeError("managed_audio_requires_macos_or_windows_x64")
     if model not in MANIFEST["models"]:
         raise ValueError("audio_model_must_be_small_or_turbo")
+    if windows:
+        _check_windows_audio_cpu()
     from setup_runtime import ensure_uv, managed_env, managed_python_version
 
     os.umask(0o077)
