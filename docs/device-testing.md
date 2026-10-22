@@ -53,6 +53,8 @@ Use synthetic text and the public audio sample for these checks. Passing setup o
 
 On Windows, verify CPU semantic inference binds only `127.0.0.1`, rejects requests without the ephemeral token, and cleans up its process and temporary key file. Verify prebuilt Whisper.cpp/FFmpeg and default sherpa-onnx run without a compiler or GPU. Credential Manager integration, the user-facing console, and Windows Firewall behavior need Windows tests; a mocked store or Mac subprocess test is separate evidence.
 
+Record AVX2, FMA, and F16C availability for Windows audio acceptance. The official Whisper.cpp CPU binary requires these features. Verify that a failing audio CPU prerequisite stops before model downloads while core connection and text commands remain available. Also verify semantic/audio setup provides its required Microsoft runtime DLLs beside the private engine without depending on a pre-installed system runtime.
+
 For the missing Xcode Command Line Tools branch, verify a real fresh macOS account/VM or use an explicit prerequisite test fixture and label which was used. The agent should explain and launch the system installation path, then recheck; a mock cannot prove Apple's dialogs or installation completed. Check supported Intel and Apple Silicon routes separately before claiming both have been run. macOS 13 core behavior and the semantic runtime's macOS 13.3 minimum are separate boundaries.
 
 ## Before connecting

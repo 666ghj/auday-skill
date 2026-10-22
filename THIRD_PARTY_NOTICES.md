@@ -18,7 +18,7 @@ The original source in this repository is distributed under the MIT license in `
 | uv and Python Build Standalone | Private first-run package manager and Python runtime | https://github.com/astral-sh/uv and https://github.com/astral-sh/python-build-standalone |
 | CMake | Isolated Whisper.cpp build tool | https://cmake.org/ |
 | imageio-ffmpeg | Isolated FFmpeg distribution | https://github.com/imageio/imageio-ffmpeg |
-| Microsoft Visual C++ runtime DLLs | Private dependencies for the prebuilt Windows Whisper.cpp runtime | https://learn.microsoft.com/en-us/visualstudio/releases/2022/redistribution |
+| Microsoft Visual C++ runtime DLLs | Private dependencies for prebuilt Windows model runtimes | https://learn.microsoft.com/en-us/visualstudio/releases/2022/redistribution |
 
 Optional audio Python package versions and distribution hashes are pinned in `scripts/uv.lock`; Windows connection dependencies are pinned in `scripts/requirements-windows-link.txt`. FFmpeg licensing depends on the selected build. Speaker segmentation, embedding, and speech-recognition weights have their own licenses and access conditions; review those at the source before use.
 
@@ -31,10 +31,11 @@ FFmpeg binary is a GPL-enabled build; the audited arm64 wheel reports
 GPL-2.0-or-later. Preserve and consult the installed wheel's license files.
 
 Windows audio setup downloads the official Whisper.cpp CPU archive and a matching
-FFmpeg wheel. Required Microsoft runtime DLLs are obtained from the pinned official
-Visual Studio 2022 CRT redistributable package and kept beside the private audio
-runtime; this does not install MSVC or change a system runtime. The selected DLLs
-are `msvcp140.dll`, `vcruntime140.dll`, `vcruntime140_1.dll`, and `vcomp140.dll`.
+FFmpeg wheel. Semantic and audio setup obtain required Microsoft runtime DLLs from
+the same pinned official Visual Studio 2022 CRT redistributable package (about
+3.22 MB) and keep them beside each private engine. This does not install MSVC or
+change a system runtime. Both engines use `msvcp140.dll`, `vcruntime140.dll`, and
+`vcruntime140_1.dll`; the audio engine also uses `vcomp140.dll`.
 Microsoft's [runtime license terms](https://visualstudio.microsoft.com/license-terms/vs2022-cruntime/)
 apply separately; see the
 [redistribution list](https://learn.microsoft.com/en-us/visualstudio/releases/2022/redistribution)

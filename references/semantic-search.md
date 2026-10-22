@@ -20,7 +20,9 @@ requested. The agent performs the preparation:
 Setup prepares the private base environment when needed, downloads and verifies
 the pinned model/runtime, saves configuration, and runs a synthetic verification.
 The model download is 333.59 MB. Runtime archives are about 11.2 MB on Mac or
-18.43 MB for the Windows x64 CPU runtime. The private base environment is additional,
+18.43 MB for the Windows x64 CPU runtime, plus about 3.22 MB for the private Microsoft
+runtime package when needed. These DLLs are installed beside the engine, not
+through a system-wide installer. The private base environment is additional,
 with more space required after extraction. The runtime requires macOS 13.3 or later,
 or Windows 10/11 x64. Explain the
 downloads and [Gemma terms](https://ai.google.dev/gemma/terms); an explicit request

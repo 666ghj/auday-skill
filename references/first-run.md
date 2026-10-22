@@ -60,7 +60,7 @@ At the first onboarding, recommend installing local semantic search so the user 
 
 > I recommend preparing local semantic search so I can find ideas even when you use different words. The model is 333.59 MB, with a small local runtime and base tools downloaded separately. It runs on this computer. Shall I prepare it now, or leave it for later?
 
-Give the relevant runtime download size: about 11.2 MB on Mac or 18.43 MB for Windows x64. Explain that extraction and future indexes need additional disk space.
+Give the relevant runtime download size: about 11.2 MB on Mac or 18.43 MB for Windows x64, plus about 3.22 MB for a private Microsoft runtime package on Windows when needed. Explain that extraction and future indexes need additional disk space.
 
 Mention the model's [Gemma terms](https://ai.google.dev/gemma/terms) when presenting this setup. This does not make the entire desktop assistant local: relevant excerpts returned to a cloud assistant can still reach its model.
 
@@ -108,7 +108,7 @@ For a new environment, the integrated Whisper.cpp route supplies two executable 
 | `small` — Whisper small Q5_1 | 190.09 MB | Limited memory, a CPU-first Windows workflow, or a lightweight first pass |
 | `turbo` — Whisper large-v3-turbo Q5_0 | 574.04 MB | Enough memory and a task that warrants the larger multilingual model |
 
-These are model downloads, not complete installed size or peak memory. Windows installs an official prebuilt Whisper.cpp CPU runtime and a matching FFmpeg binary; it does not compile them or require a GPU. Mac builds the selected Whisper.cpp runtime with Apple tools. Read the download sizes and model choices returned by `setup`, then explain the selected downloads before starting; a request to prepare transcription already authorizes the necessary setup. Do not install both models by default.
+These are model downloads, not complete installed size or peak memory. Windows installs an official prebuilt Whisper.cpp CPU runtime and a matching FFmpeg binary; it does not compile them or require a GPU. That audio runtime requires AVX2, FMA, and F16C CPU features. Check this capability before large audio downloads; a failed audio CPU check does not block ordinary connection, text sync, keyword retrieval, or readable exports. Mac builds the selected Whisper.cpp runtime with Apple tools. Read the download sizes and model choices returned by `setup`, then explain the selected downloads before starting; a request to prepare transcription already authorizes the necessary setup. Do not install both models by default.
 
 Allow room for extracted runtimes, build products, and resumable download caches.
 As a practical starting allowance, keep at least 1 GB free for semantic setup,
