@@ -7,6 +7,7 @@ import platform
 import re
 import shutil
 import subprocess
+import tarfile
 import tempfile
 import time
 from datetime import datetime, timezone
@@ -151,14 +152,16 @@ def _download_model(asset, directory, label):
     )
 
 
-def _ensure_source(runtime):
+def _ensure_source(runtime, *, windows=False):
     """The pinned archive also supplies the public verification sample and license."""
     from setup_runtime import download_asset, extract_tar
     source_asset = MANIFEST["whisperSource"]
     source = runtime / source_asset["directory"]
+    required = ("LICENSE", "samples/jfk.wav") if windows else (
+        "CMakeLists.txt", "LICENSE", "samples/jfk.wav"
+    )
     if source.exists() or source.is_symlink():
-        if source.is_symlink() or not all((source / name).is_file() for name in
-                                         ("CMakeLists.txt", "LICENSE", "samples/jfk.wav")):
+        if source.is_symlink() or not all((source / name).is_file() for name in required):
             raise ValueError("existing_audio_source_incomplete; preserve it and choose a new setup root")
     else:
         archive = download_asset(
@@ -169,7 +172,24 @@ def _ensure_source(runtime):
         # Use a fresh destination; source trees are never overlaid.
         with tempfile.TemporaryDirectory(prefix="extract-", dir=runtime) as tmp:
             unpacked = Path(tmp) / "contents"
-            extract_tar(archive, unpacked)
+            if windows:
+                # Only the license and sample are needed with the prebuilt CLI.
+                # Unrelated source paths can exceed legacy Windows path limits.
+                selected = unpacked / source_asset["directory"]
+                with tarfile.open(archive, "r:gz") as tar:
+                    for name in required:
+                        archive_name = source_asset["directory"] + "/" + name
+                        matches = [member for member in tar.getmembers()
+                                   if member.name == archive_name]
+                        if (len(matches) != 1 or not matches[0].isfile() or
+                                not 0 < matches[0].size <= 32 * 1024**2):
+                            raise ValueError("invalid_whisper_verification_asset")
+                        destination = selected / name
+                        destination.parent.mkdir(parents=True, exist_ok=True)
+                        with tar.extractfile(matches[0]) as content, destination.open("xb") as output:
+                            shutil.copyfileobj(content, output)
+            else:
+                extract_tar(archive, unpacked)
             shutil.move(str(unpacked / source_asset["directory"]), str(source))
     return source
 
@@ -308,7 +328,7 @@ def setup_audio(root, model="small", diarize=True, *, uv_path=None):
     if not windows:
         ffmpeg.chmod(ffmpeg.stat().st_mode | 0o100)
     source_asset = MANIFEST["whisperSource"]
-    source = _ensure_source(runtime)
+    source = _ensure_source(runtime, windows=windows)
     if windows:
         whisper = _prepare_windows_whisper(runtime, source)
     else:

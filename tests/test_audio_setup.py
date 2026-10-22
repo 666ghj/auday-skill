@@ -1,11 +1,13 @@
 """Isolated setup contracts. Real downloads are separate, explicit checks."""
 
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
 import sys
 import tempfile
+import tarfile
 import subprocess
 import zipfile
 from types import SimpleNamespace
@@ -302,6 +304,30 @@ class WindowsEngineInstallationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "file_verification_failed"):
             audio_setup._prepare_windows_whisper(self.runtime, self.source)
         self.assertFalse((self.runtime / self.manifest["whisperWindows"]["directory"]).exists())
+
+
+class WindowsVerificationAssetTests(unittest.TestCase):
+    def test_windows_extracts_only_license_and_sample_from_verified_source(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            runtime = Path(temporary)
+            archive = runtime / "source.tar.gz"
+            prefix = audio_setup.MANIFEST["whisperSource"]["directory"]
+            with tarfile.open(archive, "w:gz") as tar:
+                for name, body in (("LICENSE", b"synthetic license"),
+                                   ("samples/jfk.wav", b"synthetic audio"),
+                                   ("unrelated/" + "long-" * 40 + ".cpp", b"unused source")):
+                    member = tarfile.TarInfo(prefix + "/" + name)
+                    member.size = len(body)
+                    tar.addfile(member, io.BytesIO(body))
+            shared = SimpleNamespace(download_asset=Mock(return_value=archive), extract_tar=Mock())
+            with patch.dict(sys.modules, {"setup_runtime": shared}):
+                source = audio_setup._ensure_source(runtime, windows=True)
+                self.assertEqual((source / "samples/jfk.wav").read_bytes(), b"synthetic audio")
+                self.assertFalse((source / "unrelated").exists())
+                shared.extract_tar.assert_not_called()
+                shared.download_asset.reset_mock()
+                self.assertEqual(audio_setup._ensure_source(runtime, windows=True), source)
+                shared.download_asset.assert_not_called()
 
 
 class AudioProcessLifecycleTests(unittest.TestCase):
