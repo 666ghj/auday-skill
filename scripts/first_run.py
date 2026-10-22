@@ -5,14 +5,14 @@ import json
 import os
 from pathlib import Path
 import re
-import subprocess
 import sys
 import tempfile
 
 from progress import report
+from platform_utils import physical_memory_bytes, secure_directory
 from setup_runtime import (
-    command_line_tools_status, download_asset, file_hash, host_architecture,
-    install_runtime, require_macos, runtime_asset,
+    command_line_tools_status, download_asset, file_hash,
+    install_runtime, require_supported_system, runtime_asset,
 )
 
 MODEL_URL = (
@@ -29,7 +29,7 @@ def _profile(root, profile):
 
 
 def _load(path):
-    return json.loads(path.read_text()) if path.is_file() else {}
+    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
 
 
 def _save(path, value):
@@ -37,7 +37,7 @@ def _save(path, value):
 
 
 def _save_bytes(path, value):
-    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    secure_directory(path.parent)
     fd, temporary = tempfile.mkstemp(prefix=".setup-", dir=path.parent)
     try:
         with os.fdopen(fd, "wb") as stream:
@@ -53,7 +53,7 @@ def setup_status(root, profile="default"):
     selected = _profile(root, profile)
     state = _load(selected / "setup-state.json")
     try:
-        require_macos("13.3")
+        require_supported_system("13.3")
         supported, unavailable_reason = True, None
     except ValueError as error:
         supported, unavailable_reason = False, str(error)
@@ -75,7 +75,7 @@ def setup_status(root, profile="default"):
         "choice": state.get("semanticChoice", "not_selected"),
         "modelDownloadBytes": MODEL_BYTES,
         "supported": supported, "unavailableReason": unavailable_reason,
-        "runtimeArchiveBytes": runtime_asset("llama")["size"],
+        "runtimeArchiveBytes": runtime_asset("llama")["size"] if supported else None,
         "recommendedFreeDiskBytes": 1024**3,
     }
     audio = {"ready": False, "installation": "on_demand"}
@@ -137,10 +137,10 @@ def _verify_semantic(config):
 
 def setup_semantic(root, profile="default"):
     from semantic_search import MODEL_SHA, configure
-    require_macos("13.3")
+    require_supported_system("13.3")
     root = Path(root).expanduser().resolve()
     selected = _profile(root, profile)
-    selected.mkdir(parents=True, exist_ok=True, mode=0o700)
+    secure_directory(selected)
     state_path = selected / "setup-state.json"
     state = _load(state_path)
     if state.get("semanticChoice") != "enabled":
@@ -181,8 +181,4 @@ def setup_semantic(root, profile="default"):
 
 
 def recommended_audio_model():
-    result = subprocess.run(
-        ["/usr/sbin/sysctl", "-n", "hw.memsize"], capture_output=True, text=True, timeout=10,
-    )
-    memory = int(result.stdout.strip()) if result.returncode == 0 else 0
-    return "turbo" if memory >= 16 * 1024**3 else "small"
+    return "turbo" if physical_memory_bytes() >= 16 * 1024**3 else "small"
