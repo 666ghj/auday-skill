@@ -14,12 +14,14 @@ import os
 from pathlib import Path
 import re
 import secrets
+import shutil
 import socket
 import sqlite3
 import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 from platform_utils import (
@@ -148,6 +150,55 @@ def _loopback_port():
         return listener.getsockname()[1]
 
 
+class _StartupDiagnostics:
+    """Drain stderr without exposing paths, model text, or unbounded logs."""
+    def __init__(self, stream):
+        self.stream = stream
+        self.capture = bytearray()
+        self.recording = True
+        self.lock = threading.Lock()
+        self.thread = threading.Thread(target=self._drain, daemon=True)
+        self.thread.start()
+
+    def _drain(self):
+        try:
+            while block := self.stream.read(1024):
+                with self.lock:
+                    if self.recording:
+                        self.capture.extend(block[:max(0, 16 * 1024 - len(self.capture))])
+        except (OSError, ValueError):
+            pass
+
+    def ready(self):
+        with self.lock:
+            self.recording = False
+            self.capture.clear()
+
+    def failure(self, code):
+        self.thread.join(timeout=1)
+        with self.lock:
+            detail = bytes(self.capture).lower()
+        windows_code = code & 0xFFFFFFFF
+        if windows_code == 0xC0000135:
+            reason = "missing_runtime_dependency"
+        elif windows_code == 0xC000001D:
+            reason = "unsupported_cpu_instruction"
+        elif windows_code in (0xC000007B, 0xC0000142):
+            reason = "native_runtime_load_failed"
+        elif b"failed to open file" in detail:
+            reason = "runtime_file_unreadable"
+        elif b"invalid argument" in detail or b"unknown argument" in detail:
+            reason = "runtime_argument_invalid"
+        else:
+            reason = "native_runtime_startup_failed"
+        return f"semantic_runtime_failed_to_start: exit_code={code}; reason={reason}"
+
+    def close(self):
+        self.ready()
+        self.thread.join(timeout=1)
+        self.stream.close()
+
+
 class LocalEncoder:
     """Private Unix socket or authenticated Windows loopback; local inference only."""
     def __init__(self, config):
@@ -156,6 +207,7 @@ class LocalEncoder:
         self.process = None
         self.directory = None
         self.loopback_port = None
+        self.diagnostics = None
 
     def __enter__(self):
         model = Path(self.config["modelPath"])
@@ -175,33 +227,47 @@ class LocalEncoder:
             token_file.write_text(self.token, encoding="utf-8")
             if not is_windows():
                 token_file.chmod(0o600)
+            model_argument, token_argument, working_directory = str(model), str(token_file), server.parent
             if is_windows():
+                # b10865 converts argv to UTF-8, but --api-key-file still uses
+                # narrow std::ifstream on Windows. Use ASCII names relative to
+                # a Unicode working directory passed through CreateProcessW.
+                model_alias = directory / "model.gguf"
+                try:
+                    os.link(model, model_alias)
+                except OSError:
+                    # A custom model location may be on another filesystem.
+                    shutil.copyfile(model, model_alias)
+                model_argument, token_argument, working_directory = "model.gguf", "auth", directory
                 self.loopback_port = _loopback_port()
                 endpoint_arguments = ["--host", "127.0.0.1", "--port", str(self.loopback_port)]
             else:
                 self.endpoint = directory / "s.sock"
                 endpoint_arguments = ["--host", str(self.endpoint)]
             cmd = [
-                str(server), "-m", str(model), "--embeddings", "--pooling", "mean",
+                str(server), "-m", model_argument, "--embeddings", "--pooling", "mean",
                 "--embd-normalize", "2", "-ngl", "0", "--device", "none",
                 "-t", "2", "-tb", "2", "-c", str(MAX_TOKENS), "-b", str(MAX_TOKENS),
                 "-ub", str(MAX_TOKENS), "-np", "1", *endpoint_arguments,
-                "--api-key-file", str(token_file), "--offline", "--no-warmup",
+                "--api-key-file", token_argument, "--offline", "--no-warmup",
                 "--no-cache-prompt", "--cache-ram", "0", "--no-repack",
                 "--no-webui", "--log-disable",
             ]
             report("Loading local semantic model", force=True)
             self.process = start_process(
-                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                stdin=subprocess.DEVNULL, cwd=server.parent,
+                cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                stdin=subprocess.DEVNULL, cwd=working_directory, bufsize=0,
             )
+            self.diagnostics = _StartupDiagnostics(self.process.stderr)
             deadline = time.monotonic() + 60
             while time.monotonic() < deadline:
-                if self.process.poll() is not None:
-                    raise RuntimeError("semantic_runtime_failed_to_start")
+                code = self.process.poll()
+                if code is not None:
+                    raise RuntimeError(self.diagnostics.failure(code))
                 try:
                     healthy = self._api("health", timeout=1).get("status") == "ok"
                     if healthy and self.process.poll() is None:
+                        self.diagnostics.ready()
                         return self
                 except (OSError, http.client.HTTPException, ValueError):
                     pass
@@ -217,6 +283,9 @@ class LocalEncoder:
                 stop_process(self.process, timeout=5)
         finally:
             self.process = None
+            if self.diagnostics is not None:
+                self.diagnostics.close()
+                self.diagnostics = None
             if self.directory is not None:
                 self.directory.cleanup()
                 self.directory = None

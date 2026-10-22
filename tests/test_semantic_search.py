@@ -2,6 +2,7 @@
 
 import contextlib
 import json
+import io
 import os
 from pathlib import Path
 import sqlite3
@@ -266,6 +267,7 @@ class LocalRuntimeTests(unittest.TestCase):
         }
         self.process = Mock()
         self.process.poll.return_value = None
+        self.process.stderr = io.BytesIO()
         self.progress = patch.object(semantic, "report")
         self.progress.start()
         self.addCleanup(self.progress.stop)
@@ -290,7 +292,7 @@ class LocalRuntimeTests(unittest.TestCase):
         def start(command, **kwargs):
             captured["command"] = command
             captured["kwargs"] = kwargs
-            captured["tokenFile"] = Path(command[command.index("--api-key-file") + 1])
+            captured["tokenFile"] = Path(kwargs["cwd"]) / command[command.index("--api-key-file") + 1]
             captured["token"] = captured["tokenFile"].read_text(encoding="utf-8")
             return self.process
 
@@ -302,6 +304,10 @@ class LocalRuntimeTests(unittest.TestCase):
             with semantic.LocalEncoder(self.config) as encoder:
                 command = captured["command"]
                 self.assertEqual(command[command.index("--host") + 1], "127.0.0.1")
+                self.assertEqual(command[command.index("-m") + 1], "model.gguf")
+                self.assertEqual(command[command.index("--api-key-file") + 1], "auth")
+                alias = Path(captured["kwargs"]["cwd"]) / "model.gguf"
+                self.assertEqual(alias.read_bytes(), self.model.read_bytes())
                 self.assertEqual(int(command[command.index("--port") + 1]), encoder.loopback_port)
                 self.assertGreater(encoder.loopback_port, 0)
                 self.assertIn("--offline", command)
@@ -339,6 +345,65 @@ class LocalRuntimeTests(unittest.TestCase):
                 self.assertTrue(directories)
                 self.assertFalse(directories[0].exists())
                 self.assertEqual(stopped.call_count, 0 if fails_to_start else 1)
+
+    def test_windows_unicode_paths_use_private_relative_aliases_with_copy_fallback(self):
+        original_model = self.model.read_bytes()
+        captured = {}
+
+        def start(command, **kwargs):
+            captured["directory"] = Path(kwargs["cwd"])
+            self.assertTrue(captured["directory"].is_dir())
+            self.assertEqual(command[command.index("-m") + 1], "model.gguf")
+            self.assertEqual(command[command.index("--api-key-file") + 1], "auth")
+            self.assertEqual((captured["directory"] / "model.gguf").read_bytes(), original_model)
+            return self.process
+
+        with patch.object(semantic, "MODEL_SHA", semantic._sha(self.model)), \
+                patch.object(semantic, "is_windows", return_value=True), \
+                patch.object(semantic.os, "link", side_effect=OSError("different volume")), \
+                patch.object(semantic, "start_process", side_effect=start), \
+                patch.object(semantic, "stop_process"), \
+                patch.object(semantic.LocalEncoder, "_api", return_value={"status": "ok"}):
+            with semantic.LocalEncoder(self.config):
+                pass
+        self.assertEqual(self.model.read_bytes(), original_model)
+        self.assertFalse(captured["directory"].exists())
+
+    def test_startup_diagnostics_are_bounded_and_never_echo_private_text(self):
+        cases = (
+            (1, b"error: failed to open file 'private secret path'", "runtime_file_unreadable"),
+            (1, b"invalid argument: private secret", "runtime_argument_invalid"),
+            (0xC0000135, b"", "missing_runtime_dependency"),
+            (0xC000001D, b"", "unsupported_cpu_instruction"),
+            (1, b"private secret " * 100000, "native_runtime_startup_failed"),
+        )
+        for code, raw, reason in cases:
+            with self.subTest(code=code, reason=reason):
+                diagnostics = semantic._StartupDiagnostics(io.BytesIO(raw))
+                try:
+                    message = diagnostics.failure(code)
+                    self.assertEqual(message,
+                        f"semantic_runtime_failed_to_start: exit_code={code}; reason={reason}")
+                    self.assertLessEqual(len(diagnostics.capture), 16 * 1024)
+                    diagnostics.ready()
+                    self.assertEqual(len(diagnostics.capture), 0)
+                finally:
+                    diagnostics.close()
+
+    def test_failed_native_start_reports_only_exit_code_and_safe_reason(self):
+        self.process.poll.return_value = 1
+        self.process.stderr = io.BytesIO(b"error: failed to open file 'private path'")
+        with patch.object(semantic, "MODEL_SHA", semantic._sha(self.model)), \
+                patch.object(semantic, "is_windows", return_value=True), \
+                patch.object(semantic, "start_process", return_value=self.process), \
+                patch.object(semantic, "stop_process") as stopped:
+            encoder = semantic.LocalEncoder(self.config)
+            with self.assertRaisesRegex(RuntimeError,
+                    "^semantic_runtime_failed_to_start: exit_code=1; reason=runtime_file_unreadable$"):
+                encoder.__enter__()
+        stopped.assert_called_once()
+        self.assertIsNone(encoder.directory)
+        self.assertTrue(self.process.stderr.closed)
 
     def test_windows_http_client_connects_directly_and_authenticates_every_request(self):
         encoder = semantic.LocalEncoder(self.config)
