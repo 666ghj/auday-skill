@@ -8,19 +8,21 @@ statement is correct. Do not claim that SQLite alone supplies semantic embedding
 
 ## Local setup
 
-For a new environment, use [first-run setup](first-run.md). Recommend this
+For a new environment, use [first-run setup](first-run.md). `<auday>` below means
+the host's bootstrap prefix defined there: shell on Mac, PowerShell on Windows. Recommend this
 capability once, respect a saved deferral, and install it when selected or explicitly
 requested. The agent performs the preparation:
 
 ```text
-/bin/sh <skill-root>/scripts/bootstrap.sh setup --semantic
+<auday> setup --semantic
 ```
 
 Setup prepares the private base environment when needed, downloads and verifies
 the pinned model/runtime, saves configuration, and runs a synthetic verification.
-The model download is 333.59 MB and the runtime archives are about 11.2 MB; the
-base environment is about 40 MB when needed, with more space required after
-extraction. The official runtime requires macOS 13.3 or later. Explain the
+The model download is 333.59 MB. Runtime archives are about 11.2 MB on Mac or
+18.43 MB for the Windows x64 CPU runtime. The private base environment is additional,
+with more space required after extraction. The runtime requires macOS 13.3 or later,
+or Windows 10/11 x64. Explain the
 downloads and [Gemma terms](https://ai.google.dev/gemma/terms); an explicit request
 to prepare semantic search does not need another installation confirmation.
 
@@ -46,8 +48,8 @@ A similarly named QAT file without `dense_2` and `dense_3` is not interchangeabl
 Configuration and inference verify the exact complete-model hash. The implementation
 uses mean pooling, both projection layers, 768 dimensions, L2 normalization, the
 model's query/document prefixes, and CPU `--no-repack`. Runtime identity includes
-the executable and adjacent dynamic libraries, because the executable may be a
-small launcher.
+the executable and its dynamic libraries: adjacent `.dylib` files on Mac and the
+Windows `.exe` with adjacent/nested DLLs. The executable alone may be a small launcher.
 
 Keep installed model/runtime assets in an ordinary local application-support
 directory, independently of development checkouts. Setup manages those assets;
@@ -55,17 +57,17 @@ the configuration also accepts explicit local paths for an existing verified
 installation. No other Auday checkout is required.
 
 ```text
-/bin/sh <skill-root>/scripts/bootstrap.sh index
-/bin/sh <skill-root>/scripts/bootstrap.sh index-status
-/bin/sh <skill-root>/scripts/bootstrap.sh search "a decision described in different words" --mode semantic --limit 10
-/bin/sh <skill-root>/scripts/bootstrap.sh search "exact identifier" --mode keyword
+<auday> index
+<auday> index-status
+<auday> search "a decision described in different words" --mode semantic --limit 10
+<auday> search "exact identifier" --mode keyword
 ```
 
 For an existing verified model/runtime, configure their paths instead of downloading
 another copy:
 
 ```text
-/bin/sh <skill-root>/scripts/bootstrap.sh configure-semantic --model <local-model.gguf> --server <local-runtime/llama-server>
+<auday> configure-semantic --model <local-model.gguf> --server <local-server-executable>
 ```
 
 The standalone module exposes the same implementation for manually managed
@@ -138,9 +140,12 @@ Semantic queries return up to 100 records and do not support `--offset` paginati
 Narrow the query, date, or kind when more focused coverage is needed; keyword
 pagination is a separate retrieval workflow.
 
-The inference process lives only for the current operation. It uses an authenticated
-Unix socket inside a private temporary directory, with no TCP listener. Model
-requests and private text are not logged. Stage/count progress goes to stderr;
+The inference process lives only for the current operation. Mac uses an authenticated
+Unix socket inside a private temporary directory, with no TCP listener. Windows
+uses a dynamically selected `127.0.0.1` port and an ephemeral random Bearer token
+read from a private temporary key file. It does not bind a public interface or
+send text to a remote inference service. Model requests and private text are not
+logged. Stage/count progress goes to stderr;
 the final JSON result goes to stdout. Explain those stages to the user, including
 whether a long first build is still encoding records or has completed.
 

@@ -1,8 +1,8 @@
 # Local audio analysis
 
-Use Mac compute to explore recordings in more depth. Preserve the phone's existing work and create separate results.
+Use local compute on Mac or Windows to explore recordings in more depth. Preserve the phone's existing work and create separate results.
 
-Choose an engine using [language and dialect routing](audio-language-routing.md), which covers Japanese, Chinese, English, Korean, French, German and mixed-language recordings. For Mac resources, meeting speaker turns and identity handling, read [Choosing local audio models on Mac](mac-audio-models.md). The commands below describe the bundled Whisper.cpp/sherpa-onnx runner; optional upstream engines need their own local environment.
+Choose an engine using [language and dialect routing](audio-language-routing.md), which covers Japanese, Chinese, English, Korean, French, German and mixed-language recordings. For Mac-specific engines and resource planning, read [Choosing local audio models on Mac](mac-audio-models.md). The commands below describe the bundled Whisper.cpp/sherpa-onnx runner. `<auday>` means the platform-specific bootstrap prefix from [first-run setup](first-run.md); optional upstream engines need their own compatible local environment.
 
 ## Capability boundaries
 
@@ -13,16 +13,18 @@ Choose an engine using [language and dialect routing](audio-language-routing.md)
 
 ## Prepare
 
-Fetch the selected asset with `bootstrap.sh audio <asset-id>` and retain its `.asset.json`. If the phone permits text only, do not bypass that scope. Stored audio may contain enhancements, missing intervals, or omitted silence; analysis cannot recover sound that no longer exists.
+Fetch the selected asset with `<auday> audio <asset-id>` and retain its `.asset.json`. If the phone permits text only, do not bypass that scope. Stored audio may contain enhancements, missing intervals, or omitted silence; analysis cannot recover sound that no longer exists.
 
-For a new Mac, follow [first-run setup](first-run.md); do not require the user to install command-line tools or models manually. Prepare transcription only when the task needs it. The integrated route installs one selected Whisper model, the required runtime/audio conversion tools, and anonymous diarization by default:
+For a new computer, follow [first-run setup](first-run.md); do not require the user to install command-line tools or models manually. Prepare transcription only when the task needs it. The integrated route installs one selected Whisper model, the required runtime/audio conversion tools, and anonymous diarization by default:
 
 ```text
-/bin/sh <skill-root>/scripts/bootstrap.sh doctor
-/bin/sh <skill-root>/scripts/bootstrap.sh setup --audio --model small
+<auday> doctor
+<auday> setup --audio --model small
 ```
 
-`small` downloads the 190.09 MB multilingual Whisper small Q5_1 model; `turbo` selects the 574.04 MB large-v3-turbo Q5_0 model. Choose one based on the machine, actual speech, and task. Speaker weights add about 30 MB; runtime archives and Python dependencies are additional. The Whisper.cpp build needs Xcode Command Line Tools; complete that system setup if missing before downloading large models. Explain the selected downloads and show progress. Setup verifies hashes, saves paths, and runs synthetic checks; it does not establish transcription quality on the user's recording.
+`small` downloads the 190.09 MB multilingual Whisper small Q5_1 model; `turbo` selects the 574.04 MB large-v3-turbo Q5_0 model. Choose one based on the machine, actual speech, and task. Speaker weights add about 30 MB; runtime archives and Python dependencies are additional. Explain the selected downloads and show progress. Setup verifies hashes, saves paths, and tests a public sample; it does not establish transcription quality on the user's recording.
+
+On Windows 10/11 x64, setup installs an official prebuilt Whisper.cpp CPU runtime, its private runtime DLLs, and FFmpeg. It requires neither a GPU nor MSVC/WSL installation. Start with `small` when memory or CPU turnaround matters. On Mac, the Whisper.cpp build needs Xcode Command Line Tools; complete that system setup if missing before downloading large models. Apple Silicon acceleration and Mac-specific engine guidance do not apply to Windows.
 
 If the user declines speaker labels, use `setup --audio --model small --no-diarize` (or the selected `turbo` route). This skips speaker weights and packages. Keep that choice in the transcription command as well. Do not add an unwanted speaker installation merely to make default checks pass.
 
@@ -37,18 +39,16 @@ Select a model for the actual spoken language and task; a working language-speci
 After setup, use the saved configuration:
 
 ```text
-/bin/sh <skill-root>/scripts/bootstrap.sh transcribe \
-  --audio <local-audio> --output <new-private-output-directory> --language auto
+<auday> transcribe --audio <local-audio> --output <new-private-output-directory> --language auto
 ```
 
 If the user explicitly declines speaker labels:
 
 ```text
-/bin/sh <skill-root>/scripts/bootstrap.sh transcribe \
-  --audio <local-audio> --output <new-private-output-directory> --language auto --no-diarize
+<auday> transcribe --audio <local-audio> --output <new-private-output-directory> --language auto --no-diarize
 ```
 
-For manually configured tools, the low-level runner remains available. Default transcription with anonymous diarization:
+For manually configured tools, the low-level runner remains available. The following advanced examples use macOS shell syntax and an existing `uv`/Python installation; new Windows and Mac installations should use the bootstrap commands above. Default transcription with anonymous diarization:
 
 ```text
 uv run --project <skill-root>/scripts --frozen --extra diarization python <skill-root>/scripts/refine_audio.py \

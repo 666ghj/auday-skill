@@ -1,10 +1,12 @@
 # Choosing a transcription strategy by language
 
-Reviewed 2026-10-20. This is a decision guide for an agent, not a fixed language-to-model dispatcher. Choose for the recording's language or dialect, acoustic conditions, task, available Mac resources and useful models already installed. The entries below suggest what to try first; they are not universal accuracy rankings.
+Reviewed 2026-10-22 for platform scope. This is a decision guide for an agent, not a fixed language-to-model dispatcher. Choose for the recording's language or dialect, acoustic conditions, task, host platform, available resources and useful models already installed. The entries below suggest what to try first; they are not universal accuracy rankings.
 
 ## A first installation
 
-Do not assume the user has any of these engines. [First-run setup](first-run.md) provides an integrated, verified installation path for multilingual Whisper.cpp `small` (190.09 MB) or `turbo` (574.04 MB), with anonymous speaker diarization by default. For an ordinary first transcription, choose one of these based on language coverage and Mac resources, and have the agent complete its setup.
+Do not assume the user has any of these engines. [First-run setup](first-run.md) provides an integrated installation and verification path on Mac and Windows 10/11 x64 for multilingual Whisper.cpp `small` (190.09 MB) or `turbo` (574.04 MB), with anonymous speaker diarization by default. For an ordinary first transcription, choose one of these based on language coverage and local resources, and have the agent complete its setup. Windows uses the CPU runtime and does not require a separate GPU.
+
+The MLX, WhisperKit, FluidAudio/Core ML, and Apple acceleration routes below are Mac-specific. Do not copy their installation steps to Windows or infer Windows support from a model's language list. On Windows, use the integrated Whisper.cpp route unless a separate Windows-compatible engine has been selected and verified for the task.
 
 The specialist candidates below can justify a different route when the task needs it; they are not all integrated into `setup --audio`. Install and verify only that selected engine, with its actual local model revision. Prefer a usable first result over downloading a catalog of overlapping models. A user who opts out of speaker labels must not receive speaker model downloads or related dependencies.
 
@@ -32,7 +34,7 @@ Within the Whisper family, turbo favors turnaround; large-v3 is a useful quality
 
 ## Choose for the actual recording
 
-Use Auday metadata and the recording to identify language; the user's nationality, chat language, sales region or Mac UI locale is not sufficient. Known single-language audio can use an explicit language hint. Unknown or mixed-language audio should begin with detection and spot-checking. If a long recording changes languages, preserve offsets when processing language-homogeneous regions; never assume one detected language describes the entire file.
+Use Auday metadata and the recording to identify language; the user's nationality, chat language, sales region or desktop UI locale is not sufficient. Known single-language audio can use an explicit language hint. Unknown or mixed-language audio should begin with detection and spot-checking. If a long recording changes languages, preserve offsets when processing language-homogeneous regions; never assume one detected language describes the entire file.
 
 The bundled Whisper runner accepts `--language ja`, `zh`, `en`, `ko`, `fr`, `de`, or `auto` as appropriate. Other engines may expect full language names or different codes. Do not invent a `--language` value for every regional dialect. Native Japanese-only or English-only models are unsuitable when preserving substantial speech in other languages is required.
 
