@@ -224,6 +224,7 @@ def _prepare_mac_whisper(runtime, source, python, env, log):
 def _prepare_windows_whisper(runtime, source):
     """Install official CPU binaries and app-local release DLLs into a fresh tree."""
     from setup_runtime import download_asset, extract_zip, file_hash
+    from windows_crt import ensure_windows_crt
     engine = MANIFEST["whisperWindows"]
     redist = MANIFEST["windowsRuntime"]
     destination = runtime / engine["directory"]
@@ -248,22 +249,17 @@ def _prepare_windows_whisper(runtime, source):
         engine["sha256"], size=engine["size"],
         label="Downloading verified Windows transcription engine",
     )
-    redist_archive = download_asset(
-        redist["url"], runtime / (redist["sha256"] + ".vsix"),
-        redist["sha256"], size=redist["size"],
-        label="Downloading private Windows runtime libraries",
-    )
     with tempfile.TemporaryDirectory(prefix="engine-", dir=runtime) as temporary:
         temporary = Path(temporary)
         stage = temporary / "install"
         release = stage / "Release"
         release.mkdir(parents=True)
-        for asset, archive, label in ((engine, engine_archive, "engine"),
-                                      (redist, redist_archive, "runtime")):
-            unpacked = extract_zip(archive, temporary / label)
-            # An explicit release-file allowlist excludes tools and debug DLLs.
-            for item in asset["files"]:
-                shutil.copyfile(unpacked / item["member"], release / item["filename"])
+        unpacked = extract_zip(engine_archive, temporary / "engine")
+        for item in engine["files"]:
+            shutil.copyfile(unpacked / item["member"], release / item["filename"])
+        # The same verified app-local CRT also supports semantic search without
+        # installing audio; OpenMP is needed only by this Whisper CPU build.
+        ensure_windows_crt(runtime.parent.parent, release, openmp=True)
         if not verified(stage):
             raise ValueError("windows_audio_engine_file_verification_failed")
         shutil.copyfile(source / "LICENSE", stage / "WHISPER-LICENSE")

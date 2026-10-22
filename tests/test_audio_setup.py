@@ -244,8 +244,8 @@ class WindowsEngineInstallationTests(unittest.TestCase):
         self.source = self.root / "source"
         self.source.mkdir()
         (self.source / "LICENSE").write_text("Synthetic MIT license")
-        self.runtime = self.root / "runtime"
-        self.runtime.mkdir()
+        self.runtime = self.root / "runtime/audio"
+        self.runtime.mkdir(parents=True)
         self.manifest = json.loads(json.dumps(audio_setup.MANIFEST))
         self.archives = {}
         for label in ("whisperWindows", "windowsRuntime"):
@@ -269,7 +269,15 @@ class WindowsEngineInstallationTests(unittest.TestCase):
             extract_zip=Mock(side_effect=unpack),
             file_hash=lambda path: hashlib.sha256(Path(path).read_bytes()).hexdigest(),
         )
-        self.patches = [patch.dict(sys.modules, {"setup_runtime": self.shared}),
+        def install_crt(root, destination, *, openmp=False):
+            self.assertTrue(openmp)
+            self.assertTrue(destination.is_relative_to(root))
+            asset = self.manifest["windowsRuntime"]
+            with zipfile.ZipFile(self.archives[asset["url"]]) as archive:
+                for item in asset["files"]:
+                    (destination / item["filename"]).write_bytes(archive.read(item["member"]))
+        self.crt = SimpleNamespace(ensure_windows_crt=Mock(side_effect=install_crt))
+        self.patches = [patch.dict(sys.modules, {"setup_runtime": self.shared, "windows_crt": self.crt}),
                         patch.object(audio_setup, "MANIFEST", self.manifest)]
         for patcher in self.patches:
             patcher.start()
