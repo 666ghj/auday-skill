@@ -4,6 +4,13 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# Agent shells may inherit a PowerShell 7 PSModulePath when launching Windows
+# PowerShell 5.1. Load only the modules shipped with this shell, without relying
+# on that inherited path or the user's module auto-loading preference.
+foreach ($module in @('Microsoft.PowerShell.Utility', 'Microsoft.PowerShell.Management')) {
+    Import-Module -Name ([IO.Path]::Combine($PSHOME, 'Modules', $module, $module + '.psd1')) -ErrorAction Stop
+}
+
 function Write-AudayProgress([string] $Message) {
     [Console]::Error.WriteLine('[Auday] ' + $Message)
 }
@@ -95,6 +102,18 @@ function Assert-AudayOrdinaryPath([string] $Path) {
     }
 }
 
+function Get-AudaySha256([string] $Path) {
+    $algorithm = [Security.Cryptography.SHA256]::Create()
+    $stream = $null
+    try {
+        $stream = [IO.File]::OpenRead($Path)
+        return [BitConverter]::ToString($algorithm.ComputeHash($stream)).Replace('-', '').ToLowerInvariant()
+    } finally {
+        if ($stream) { $stream.Dispose() }
+        $algorithm.Dispose()
+    }
+}
+
 function Get-AudayVerifiedDownload {
     param([string] $Url, [string] $Destination, [string] $Sha256, [long] $Size)
     if ($Url -notmatch '^https://' -or $Sha256 -cnotmatch '^[0-9a-f]{64}$' -or
@@ -103,8 +122,8 @@ function Get-AudayVerifiedDownload {
     $partial = $Destination + '.partial'
     Assert-AudayOrdinaryPath $partial
     if ([IO.File]::Exists($Destination)) {
-        if ((Get-Item -LiteralPath $Destination).Length -ne $Size -or
-                (Get-FileHash -LiteralPath $Destination -Algorithm SHA256).Hash.ToLowerInvariant() -ne $Sha256) {
+        if (([IO.FileInfo]::new($Destination)).Length -ne $Size -or
+                (Get-AudaySha256 $Destination) -ne $Sha256) {
             throw 'existing_component_hash_mismatch: preserve it and use a new setup root'
         }
         return $Destination
@@ -168,7 +187,7 @@ function Get-AudayVerifiedDownload {
         }
     } finally { [Net.ServicePointManager]::SecurityProtocol = $oldProtocol }
     Write-AudayProgress 'Verifying downloaded component'
-    if ((Get-FileHash -LiteralPath $partial -Algorithm SHA256).Hash.ToLowerInvariant() -ne $Sha256) {
+    if ((Get-AudaySha256 $partial) -ne $Sha256) {
         [IO.File]::Move($partial, $partial + '.corrupt-' + [Guid]::NewGuid().ToString('N'))
         throw 'download_hash_mismatch: invalid bytes retained separately'
     }

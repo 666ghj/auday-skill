@@ -105,11 +105,11 @@ class PowerShellBootstrapTests(unittest.TestCase):
         self.root = Path(self.temporary.name).resolve()
         self.addCleanup(self.temporary.cleanup)
 
-    def powershell(self, body, *, environment=None):
+    def powershell(self, body, *, environment=None, prelude=""):
         bootstrap = str(SCRIPTS / "bootstrap.ps1").replace("'", "''")
         script = self.root / "test script.ps1"
         # Windows PowerShell 5.1 needs a BOM to read non-ASCII source reliably.
-        script.write_text(f". '{bootstrap}'\n{body}\n", encoding="utf-8-sig")
+        script.write_text(f"{prelude}\n. '{bootstrap}'\n{body}\n", encoding="utf-8-sig")
         return subprocess.run(
             [POWERSHELL, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", str(script)],
             env=environment, capture_output=True, text=True, encoding="utf-8", timeout=30,
@@ -185,6 +185,38 @@ class PowerShellBootstrapTests(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(Path(result.stdout.strip()), target)
+
+    def test_cached_verification_and_manifest_loading_need_no_module_discovery(self):
+        target = self.root / "cached-without-autoload.zip"
+        target.write_bytes(b"synthetic archive without module auto-loading")
+        digest = hashlib.sha256(target.read_bytes()).hexdigest()
+        manifest = SCRIPTS / "runtime-assets.tsv"
+        result = self.powershell(
+            "function Get-FileHash { throw 'unexpected_Get_FileHash_dependency' }\n"
+            f"$cached = Get-AudayVerifiedDownload 'https://invalid.example/archive' {self.literal(target)} '{digest}' {target.stat().st_size}\n"
+            f"$assets = @(Import-Csv -LiteralPath {self.literal(manifest)} -Delimiter \"`t\" | Where-Object {{ $_.component -eq 'uv' -and $_.platform -eq 'windows' }})\n"
+            "@{ cached = $cached; windowsAssets = $assets.Count; autoLoading = $PSModuleAutoLoadingPreference } | ConvertTo-Json -Compress",
+            prelude="$PSModuleAutoLoadingPreference = 'None'\n$env:PSModulePath = ''",
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(Path(payload["cached"]), target)
+        self.assertEqual(payload["windowsAssets"], 1)
+        self.assertEqual(payload["autoLoading"], "None")
+
+    def test_cached_download_with_matching_size_still_requires_matching_hash(self):
+        target = self.root / "modified-cache.zip"
+        original = b"original synthetic archive"
+        target.write_bytes(b"x" * len(original))
+        result = self.powershell(
+            "function Get-FileHash { throw 'unexpected_Get_FileHash_dependency' }\n"
+            f"Get-AudayVerifiedDownload 'https://invalid.example/archive' {self.literal(target)} '{hashlib.sha256(original).hexdigest()}' {len(original)}",
+            prelude="$PSModuleAutoLoadingPreference = 'None'\n$env:PSModulePath = ''",
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("existing_component_hash_mismatch", result.stderr)
+        self.assertEqual(target.read_bytes(), b"x" * len(original))
+        self.assertFalse(target.with_name(target.name + ".partial").exists())
 
     @unittest.skipUnless(sys.platform == "win32", "Windows OS-only entrypoint")
     def test_check_creates_nothing_with_no_python_uv_or_developer_tools(self):
