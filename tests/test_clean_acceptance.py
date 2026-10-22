@@ -1,14 +1,19 @@
 """Tests for the acceptance harness, without downloading optional runtimes."""
 
+import base64
 import os
 from pathlib import Path
 import struct
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
-from check_clean_setup import audit_windows_dependencies, clean_environment, pe_imports
+from check_clean_setup import (
+    FORBIDDEN_TOOLS, audit_windows_dependencies, clean_environment,
+    install_windows_tool_traps, pe_imports,
+)
 
 
 def pe_fixture(path, imports, delayed=()):
@@ -67,6 +72,40 @@ class CleanAcceptanceTests(unittest.TestCase):
         self.assertIn(" ", str(home))
         self.assertTrue((self.root / "forbidden-tools/python.cmd").is_file())
         self.assertFalse(sentinel.exists())
+
+    def test_native_traps_compile_in_ascii_temp_but_execute_at_unicode_path(self):
+        import subprocess
+        output = self.root / "acceptance 用户"
+        output.mkdir()
+        env, _, sentinel = clean_environment(output, {"SystemRoot": r"C:\Windows"}, windows=True)
+        original_temp = env["TEMP"]
+        compiler_directories = []
+
+        def fake_run(command, **options):
+            if "-EncodedCommand" in command:
+                program = base64.b64decode(command[-1]).decode("utf-16-le")
+                self.assertTrue(program.isascii())
+                directory = Path(options["cwd"])
+                self.assertTrue(str(directory).isascii())
+                self.assertEqual(options["env"]["TEMP"], str(directory))
+                self.assertEqual(options["env"]["TMP"], str(directory))
+                (directory / "forbidden.exe").write_bytes(b"MZsynthetic-trap")
+                compiler_directories.append(directory)
+                return subprocess.CompletedProcess(command, 0)
+            self.assertFalse(str(command[0]).isascii())
+            self.assertEqual(options["env"]["TEMP"], original_temp)
+            Path(options["env"]["AUDAY_FORBIDDEN_TOOL_SENTINEL"]).write_text("forbidden")
+            return subprocess.CompletedProcess(command, 97)
+
+        with patch("check_clean_setup.subprocess.run", side_effect=fake_run):
+            install_windows_tool_traps("powershell.exe", env, build_parent=self.root)
+        self.assertEqual(env["TEMP"], original_temp)
+        self.assertFalse(sentinel.exists())
+        self.assertTrue(all(not path.exists() for path in compiler_directories))
+        for tool in FORBIDDEN_TOOLS:
+            self.assertEqual((output / "forbidden-tools" / (tool + ".exe")).read_bytes(),
+                             b"MZsynthetic-trap")
+        self.assertFalse((output / "forbidden-tools/trap-proof").exists())
 
     @unittest.skipIf(os.name == "nt", "POSIX shell trap")
     def test_posix_poison_records_accidental_global_tool_use(self):

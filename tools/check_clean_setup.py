@@ -17,6 +17,7 @@ import sqlite3
 import struct
 import subprocess
 import sys
+import tempfile
 import time
 
 from install import install
@@ -80,7 +81,7 @@ def clean_environment(output, source=None, windows=None):
     return environment, home, sentinel
 
 
-def install_windows_tool_traps(powershell, environment):
+def install_windows_tool_traps(powershell, environment, *, build_parent=None):
     """Also trap direct CreateProcess calls, which do not use .cmd scripts."""
     poison = Path(environment["AUDAY_FORBIDDEN_TOOL_SENTINEL"]).parent / "forbidden-tools"
     program = r'''public class AudayForbiddenTool {
@@ -91,16 +92,37 @@ def install_windows_tool_traps(powershell, environment):
             return 97;
         }
     }'''
-    command = "Add-Type -TypeDefinition @'\n" + program + "\n'@ -OutputAssembly " + \
-              "'" + str(poison / "forbidden.exe").replace("'", "''") + "' -OutputType ConsoleApplication"
-    subprocess.run(
-        [str(powershell), "-NoProfile", "-NonInteractive", "-EncodedCommand",
-         base64.b64encode(command.encode("utf-16-le")).decode("ascii")],
-        env=environment, check=True, timeout=60,
-    )
-    binary = (poison / "forbidden.exe").read_bytes()
+    # Legacy Windows PowerShell CodeDOM compilers may reject Unicode TEMP or
+    # output paths. This is test scaffolding: compile in a fresh ASCII runner
+    # directory, then copy the executable into the actual Unicode test paths.
+    parent = Path(build_parent or os.environ.get("RUNNER_TEMP", tempfile.gettempdir())).absolute()
+    if not str(parent).isascii():
+        raise ValueError("acceptance_ascii_build_parent_required: set RUNNER_TEMP to an ASCII path")
+    with tempfile.TemporaryDirectory(prefix="auday-trap-build-", dir=parent) as temporary:
+        build = Path(temporary)
+        compiler_env = dict(environment)
+        compiler_env.update({"TEMP": str(build), "TMP": str(build), "TMPDIR": str(build)})
+        command = "$ErrorActionPreference = 'Stop'; " + \
+                  "Add-Type -TypeDefinition @'\n" + program + "\n'@ " + \
+                  "-OutputAssembly 'forbidden.exe' -OutputType ConsoleApplication"
+        subprocess.run(
+            [str(powershell), "-NoProfile", "-NonInteractive", "-EncodedCommand",
+             base64.b64encode(command.encode("utf-16-le")).decode("ascii")],
+            env=compiler_env, cwd=build, check=True, timeout=60,
+        )
+        binary = (build / "forbidden.exe").read_bytes()
     for tool in FORBIDDEN_TOOLS:
         (poison / (tool + ".exe")).write_bytes(binary)
+    # Prove the copied executable can actually execute and write a Unicode path,
+    # while keeping the real accidental-tool sentinel untouched.
+    proof = poison / "trap-proof"
+    proof_env = dict(environment, AUDAY_FORBIDDEN_TOOL_SENTINEL=str(proof))
+    result = subprocess.run([str(poison / "python.exe")], env=proof_env, timeout=30)
+    try:
+        if result.returncode != 97 or not proof.is_file() or proof.read_text() != "forbidden":
+            raise AssertionError("native_tool_trap_self_check_failed")
+    finally:
+        proof.unlink(missing_ok=True)
 
 
 def pe_imports(path):
