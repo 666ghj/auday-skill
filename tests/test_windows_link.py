@@ -227,13 +227,27 @@ class WindowsPSKTests(unittest.TestCase):
 class WindowsMDNSTests(unittest.TestCase):
     def test_discover_resolve_and_authenticate_synthetic_service(self):
         from zeroconf import Zeroconf, ServiceInfo, IPVersion
+        import zeroconf
         name = "Auday Synthetic " + uuid.uuid4().hex[:8]
-        with PythonPeer(generated_password()) as peer, Zeroconf(ip_version=IPVersion.All) as browser:
+
+        def real_discovery_socket(**options):
+            # Keep this same-host fixture independent of macOS hosted VMs'
+            # virtual LAN interfaces by using real IPv4 multicast on loopback.
+            # Windows still exercises the production
+            # All-interfaces configuration; no discovery answers are mocked.
+            if sys.platform == "darwin":
+                options.update(interfaces=["127.0.0.1"], ip_version=IPVersion.V4Only)
+            return Zeroconf(**options)
+
+        with PythonPeer(generated_password()) as peer, \
+             real_discovery_socket(ip_version=IPVersion.All) as browser, \
+             mock.patch.object(zeroconf, "Zeroconf", side_effect=real_discovery_socket):
             info = ServiceInfo(link.SERVICE_TYPE, name + "." + link.SERVICE_TYPE,
+                               server="auday-synthetic-" + uuid.uuid4().hex + ".local.",
                                addresses=[socket.inet_aton("127.0.0.1")], port=peer.port)
             browser.register_service(info)
             try:
-                self.assertIn(name, link.discover(2)["services"])
+                self.assertIn(name, link.discover()["services"])
                 response = link.request({"service": name}, peer.password, {"op": "status"}, timeout=5)
                 self.assertTrue(response["ok"])
             finally:
