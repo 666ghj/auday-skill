@@ -172,6 +172,14 @@ def _check_windows_audio_python(python, architecture, env):
     )
 
 
+def _check_windows_audio_engines(ffmpeg, whisper, log, env):
+    """Detect broken native archives before downloading the selected models."""
+    _command([ffmpeg, "-version"], log, env,
+             "Checking native audio decoder", timeout=60)
+    _command([whisper, "--help"], log, env,
+             "Checking native transcription engine", timeout=60)
+
+
 def _download_model(asset, directory, label):
     from setup_runtime import download_asset
     return download_asset(
@@ -444,6 +452,7 @@ def setup_audio(root, model="small", diarize=True, *, uv_path=None):
     source = _ensure_source(runtime, windows=windows)
     if windows:
         whisper = _prepare_windows_whisper(runtime, source, architecture=architecture)
+        _check_windows_audio_engines(ffmpeg, whisper, log, env)
     else:
         whisper = _prepare_mac_whisper(runtime, source, python, env, log)
     model_path = _download_model(

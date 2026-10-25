@@ -202,31 +202,32 @@
     "licenseSize": 1078
   },
   "ffmpegWindowsArm64": {
-    "name": "FFmpeg 8.1.3 Windows ARM64 LGPL (BtbN month-end build)",
-    "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-09-30-13-08/ffmpeg-n8.1.3-9-g29e619e767-winarm64-lgpl-8.1.zip",
-    "sha256": "9e49da7acb363b60bf60f9efad2ac0281cf68d43930ec4b1b8dd6a4f20dd7e5f",
-    "size": 115961398,
-    "directory": "ffmpeg-windows-arm64-8.1.3-20260930",
+    "name": "FFmpeg 8.1.2 Windows ARM64 LGPL (BtbN month-end build)",
+    "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-31-13-27/ffmpeg-n8.1.2-50-g1a748fe2cd-winarm64-lgpl-8.1.zip",
+    "sha256": "0ad4d6e7342d6d77bbae4ac230964ebd51bdd6192414392e5f521d295b39b111",
+    "size": 95498313,
+    "directory": "ffmpeg-windows-arm64-8.1.2-20260831",
     "executable": "ffmpeg.exe",
     "license": "LGPL-3.0-or-later",
     "licenseURL": "https://ffmpeg.org/legal.html",
     "sourceDocumentation": "https://ffmpeg.org/download.html",
-    "buildSource": "https://github.com/BtbN/FFmpeg-Builds/tree/autobuild-2026-09-30-13-08",
+    "buildSource": "https://github.com/BtbN/FFmpeg-Builds/tree/autobuild-2026-08-31-13-27",
     "files": [
       {
-        "member": "ffmpeg-n8.1.3-9-g29e619e767-winarm64-lgpl-8.1/bin/ffmpeg.exe",
+        "member": "ffmpeg-n8.1.2-50-g1a748fe2cd-winarm64-lgpl-8.1/bin/ffmpeg.exe",
         "filename": "ffmpeg.exe",
-        "sha256": "5bce8564907e9703d0b950004aa811909112aeaa1b6b5b5750b8e347c8ee0f9f",
-        "size": 79914496
+        "sha256": "0dcbceced02edf3f6a3a7b919515b2cd8dbefbce101e432ed952b566fc9ae6cd",
+        "size": 63947264
       },
       {
-        "member": "ffmpeg-n8.1.3-9-g29e619e767-winarm64-lgpl-8.1/LICENSE.txt",
+        "member": "ffmpeg-n8.1.2-50-g1a748fe2cd-winarm64-lgpl-8.1/LICENSE.txt",
         "filename": "LICENSE.txt",
         "sha256": "da7eabb7bafdf7d3ae5e9f223aa5bdc1eece45ac569dc21b3b037520b4464768",
         "size": 7651
       }
     ],
-    "notes": "FFmpeg official download page links BtbN. Fixed month-end archive (retained for two years), native ARM64 CPU binary, no global install. Only ffmpeg.exe and its license are installed."
+    "notes": "FFmpeg official download page links BtbN. Pin the August month-end archive (retained for two years), before the September 24-October 3 LLVM strip regression documented in BtbN/FFmpeg-Builds#675. Native ARM64 CPU binary, no global install. Only ffmpeg.exe and its license are installed; setup checks executable startup before model downloads.",
+    "knownRegression": "https://github.com/BtbN/FFmpeg-Builds/issues/675"
   },
   "whisperOpenMPArm64": {
     "name": "LLVM OpenMP 20.1.8 Windows ARM64 (via llama.cpp b10865)",

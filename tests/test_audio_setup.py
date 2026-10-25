@@ -81,6 +81,7 @@ class AudioSetupTests(unittest.TestCase):
             patch.object(audio_setup, "venv_python", return_value=self.python),
             patch.object(audio_setup, "_check_windows_audio_cpu"),
             patch.object(audio_setup, "_check_windows_audio_python"),
+            patch.object(audio_setup, "_check_windows_audio_engines"),
         ]
         self.mocks = [p.start() for p in self.patches]
         for p in self.patches:
@@ -242,6 +243,28 @@ class AudioSetupTests(unittest.TestCase):
         self.shared.ensure_uv.assert_not_called()
         self.shared.download_asset.assert_not_called()
         self.mocks[4].assert_not_called()
+
+    def test_failed_native_runtime_probe_stops_before_model_downloads(self):
+        self.mocks[10].side_effect = RuntimeError("audio_setup_command_failed")
+        with patch.object(audio_setup.platform, "system", return_value="Windows"), \
+                patch.object(audio_setup, "_prepare_windows_whisper", return_value=self.whisper):
+            with self.assertRaisesRegex(RuntimeError, "audio_setup_command_failed"):
+                audio_setup.setup_audio(self.root)
+        self.shared.download_asset.assert_not_called()
+        self.mocks[6].assert_not_called()
+        self.assertFalse((self.runtime / "config.json").exists())
+
+    def test_failed_arm64_native_probe_stops_before_model_downloads(self):
+        self.shared.host_architecture.return_value = "arm64"
+        self.mocks[10].side_effect = RuntimeError("audio_setup_command_failed")
+        with patch.object(audio_setup.platform, "system", return_value="Windows"), \
+                patch.object(audio_setup, "_prepare_windows_whisper", return_value=self.whisper), \
+                patch.object(audio_setup, "_prepare_windows_arm64_ffmpeg", return_value=self.ffmpeg):
+            with self.assertRaisesRegex(RuntimeError, "audio_setup_command_failed"):
+                audio_setup.setup_audio(self.root)
+        self.shared.download_asset.assert_not_called()
+        self.mocks[6].assert_not_called()
+        self.assertFalse((self.runtime / "config.json").exists())
 
     def test_unsupported_host_stops_before_installation(self):
         self.shared.host_architecture.return_value = "x86"
@@ -519,6 +542,19 @@ class WindowsAudioCPUCheckTests(unittest.TestCase):
 
 
 class AudioProcessLifecycleTests(unittest.TestCase):
+    def test_native_engine_preflight_bounds_both_commands(self):
+        with patch.object(audio_setup, "_command") as command:
+            audio_setup._check_windows_audio_engines("ffmpeg.exe", "whisper-cli.exe", "log", {})
+        self.assertEqual(command.call_args_list[0].args[0], ["ffmpeg.exe", "-version"])
+        self.assertEqual(command.call_args_list[1].args[0], ["whisper-cli.exe", "--help"])
+        self.assertTrue(all(call.kwargs["timeout"] == 60 for call in command.call_args_list))
+
+    def test_native_engine_preflight_stops_after_decoder_failure(self):
+        with patch.object(audio_setup, "_command", side_effect=RuntimeError("decoder crashed")) as command:
+            with self.assertRaisesRegex(RuntimeError, "decoder crashed"):
+                audio_setup._check_windows_audio_engines("ffmpeg.exe", "whisper-cli.exe", "log", {})
+        command.assert_called_once()
+
     def test_setup_timeout_stops_the_whole_process_tree(self):
         process = Mock()
         process.wait.side_effect = subprocess.TimeoutExpired("synthetic", 1)
