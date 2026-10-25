@@ -161,6 +161,17 @@ def _check_windows_audio_cpu():
         )
 
 
+def _check_windows_audio_python(python, architecture, env):
+    """Refuse an old emulated interpreter before loading native audio wheels."""
+    expected = "win-arm64" if architecture == "arm64" else "win-amd64"
+    _probe_python(
+        python,
+        "import sysconfig; "
+        f"assert sysconfig.get_platform().lower() == {expected!r}, 'audio_python_architecture_mismatch'",
+        env,
+    )
+
+
 def _download_model(asset, directory, label):
     from setup_runtime import download_asset
     return download_asset(
@@ -238,15 +249,21 @@ def _prepare_mac_whisper(runtime, source, python, env, log):
     return whisper
 
 
-def _prepare_windows_whisper(runtime, source):
+def _prepare_windows_whisper(runtime, source, *, architecture="x86_64"):
     """Install official CPU binaries and app-local release DLLs into a fresh tree."""
     from setup_runtime import download_asset, extract_zip, file_hash
     from windows_crt import ensure_windows_crt
-    engine = MANIFEST["whisperWindows"]
-    redist = MANIFEST["windowsRuntime"]
+    arm64 = architecture == "arm64"
+    engine = MANIFEST["whisperWindowsArm64" if arm64 else "whisperWindows"]
+    if arm64:
+        from windows_crt import crt_asset
+        redist = crt_asset("arm64")
+    else:
+        redist = MANIFEST["windowsRuntime"]
+    openmp = MANIFEST["whisperOpenMPArm64"] if arm64 else None
     destination = runtime / engine["directory"]
     executable = destination / engine["executable"]
-    files = [*engine["files"], *redist["files"]]
+    files = [*engine["files"], *redist["files"], *(openmp["files"] if openmp else [])]
 
     def verified(directory):
         for item in files:
@@ -254,6 +271,12 @@ def _prepare_windows_whisper(runtime, source):
             if (not path.is_file() or path.is_symlink() or
                     path.stat().st_size != item["size"] or
                     file_hash(path) != item["sha256"]):
+                return False
+        if arm64:
+            license_file = directory / "WHISPER-LICENSE"
+            if (not license_file.is_file() or license_file.is_symlink() or
+                    license_file.stat().st_size != engine["licenseSize"] or
+                    file_hash(license_file) != engine["licenseSHA256"]):
                 return False
         return True
 
@@ -276,17 +299,80 @@ def _prepare_windows_whisper(runtime, source):
             shutil.copyfile(unpacked / item["member"], release / item["filename"])
         # The same verified app-local CRT also supports semantic search without
         # installing audio; OpenMP is needed only by this Whisper CPU build.
-        ensure_windows_crt(runtime.parent.parent, release, openmp=True)
+        if arm64:
+            # The upstream Whisper archive contains a Visual Studio
+            # debug_nonredist OpenMP DLL. Never copy it. LLVM's redistributable
+            # runtime exports the same required ABI; retain its license too.
+            openmp_archive = download_asset(
+                openmp["url"], runtime.parent.parent / "cache/downloads" / (openmp["sha256"] + ".zip"),
+                openmp["sha256"], size=openmp["size"],
+                label="Downloading redistributable ARM64 OpenMP runtime",
+            )
+            openmp_tree = extract_zip(openmp_archive, temporary / "openmp")
+            for item in openmp["files"]:
+                shutil.copyfile(openmp_tree / item["member"], release / item["filename"])
+            ensure_windows_crt(runtime.parent.parent, release, architecture="arm64")
+        else:
+            ensure_windows_crt(runtime.parent.parent, release, openmp=True)
+        license_source = source / "LICENSE"
+        if arm64:
+            license_source = download_asset(
+                engine["licenseDownloadURL"], runtime / (engine["licenseSHA256"] + "-LICENSE"),
+                engine["licenseSHA256"], size=engine["licenseSize"],
+                label="Preparing matching Whisper license",
+            )
+        shutil.copyfile(license_source, stage / "WHISPER-LICENSE")
         if not verified(stage):
             raise ValueError("windows_audio_engine_file_verification_failed")
-        shutil.copyfile(source / "LICENSE", stage / "WHISPER-LICENSE")
         (stage / "provenance.json").write_text(json.dumps({
             "whisperArchiveSHA256": engine["sha256"],
             "runtimeArchiveSHA256": redist["sha256"],
             "runtimeLicenseURL": redist["licenseURL"],
+            "architecture": architecture,
+            "openmpArchiveSHA256": openmp["sha256"] if openmp else None,
         }, indent=2) + "\n", encoding="utf-8")
         stage.replace(destination)
     return executable
+
+
+def _prepare_windows_arm64_ffmpeg(runtime):
+    """Install the pinned native LGPL FFmpeg without global tools or emulation."""
+    from setup_runtime import download_asset, extract_zip, file_hash
+    asset = MANIFEST["ffmpegWindowsArm64"]
+    destination = runtime / asset["directory"]
+
+    def verified(directory):
+        return all(
+            (directory / item["filename"]).is_file()
+            and not (directory / item["filename"]).is_symlink()
+            and (directory / item["filename"]).stat().st_size == item["size"]
+            and file_hash(directory / item["filename"]) == item["sha256"]
+            for item in asset["files"]
+        )
+
+    if destination.exists() or destination.is_symlink():
+        if not destination.is_symlink() and verified(destination):
+            return destination / asset["executable"]
+        raise ValueError("existing_audio_decoder_incomplete; preserve it and choose a new setup root")
+    archive = download_asset(
+        asset["url"], runtime / (asset["sha256"] + ".zip"),
+        asset["sha256"], size=asset["size"], label="Downloading native ARM64 audio decoder",
+    )
+    with tempfile.TemporaryDirectory(prefix="decoder-", dir=runtime) as temporary:
+        temporary = Path(temporary)
+        unpacked = extract_zip(archive, temporary / "archive")
+        stage = temporary / "install"
+        stage.mkdir()
+        for item in asset["files"]:
+            shutil.copyfile(unpacked / item["member"], stage / item["filename"])
+        if not verified(stage):
+            raise ValueError("windows_audio_decoder_file_verification_failed")
+        (stage / "provenance.json").write_text(json.dumps({
+            "archiveSHA256": asset["sha256"], "sourceURL": asset["url"],
+            "licenseURL": asset["licenseURL"], "architecture": "arm64",
+        }, indent=2) + "\n", encoding="utf-8")
+        stage.replace(destination)
+    return destination / asset["executable"]
 
 
 def setup_audio(root, model="small", diarize=True, *, uv_path=None):
@@ -296,16 +382,17 @@ def setup_audio(root, model="small", diarize=True, *, uv_path=None):
     Homebrew, writes system Python, or silently selects a different model.
     """
     windows = platform.system() == "Windows"
-    supported = (windows and platform.machine().lower() in ("amd64", "x86_64")) or (
+    from setup_runtime import ensure_uv, managed_env, managed_python_version, host_architecture
+    architecture = host_architecture() if windows else platform.machine()
+    supported = (windows and architecture in ("arm64", "x86_64")) or (
         platform.system() == "Darwin" and platform.machine() in ("arm64", "x86_64")
     )
     if not supported:
-        raise RuntimeError("managed_audio_requires_macos_or_windows_x64")
+        raise RuntimeError("managed_audio_requires_macos_or_windows_x64_or_arm64")
     if model not in MANIFEST["models"]:
         raise ValueError("audio_model_must_be_small_or_turbo")
-    if windows:
+    if windows and architecture == "x86_64":
         _check_windows_audio_cpu()
-    from setup_runtime import ensure_uv, managed_env, managed_python_version
 
     os.umask(0o077)
     root, runtime, models = _paths(root)
@@ -317,35 +404,46 @@ def setup_audio(root, model="small", diarize=True, *, uv_path=None):
     if not windows:
         _check_build_tools(_native_environment(env))
     uv = Path(uv_path) if uv_path else ensure_uv(root)
-    venv = runtime / "venv"
+    # Keep the native ARM64 environment separate from any older manually
+    # prepared x64 audio environment; do not replace its Python or packages.
+    venv = runtime / ("venv-arm64" if windows and architecture == "arm64" else "venv")
     env["UV_PROJECT_ENVIRONMENT"] = str(venv)
     old = _read_config(root)
     # Opting out of a new job never deletes an already installed speaker setup.
     install_speakers = bool(diarize or old.get("diarizationVerifiedAt"))
+    python_request = managed_python_version()
+    if windows:
+        from setup_runtime import managed_python_request
+        python_request = managed_python_request()
     sync = [
         uv, "sync", "--project", SCRIPT_ROOT, "--frozen", "--no-config",
-        "--python", managed_python_version(), "--managed-python", "--no-build",
+        "--python", python_request, "--managed-python", "--no-build",
     ]
     if install_speakers:
         sync += ["--extra", "diarization"]
     _command(sync, log, env, "Installing isolated audio runtime")
     python = venv_python(venv)
+    if windows:
+        _check_windows_audio_python(python, architecture, env)
     # imageio-ffmpeg has a fixed bundled binary; ignore its environment override.
-    ffmpeg_pattern = "ffmpeg-win*.exe" if windows else "ffmpeg-macos*"
-    ffmpeg = Path(_probe_python(
-        python,
-        "import imageio_ffmpeg,pathlib; "
-        "p=pathlib.Path(imageio_ffmpeg.__file__).parent/'binaries'; "
-        f"b=list(p.glob({ffmpeg_pattern!r})); "
-        "assert len(b)==1,'bundled_ffmpeg_missing'; print(b[0])",
-        env,
-    ))
+    if windows and architecture == "arm64":
+        ffmpeg = _prepare_windows_arm64_ffmpeg(runtime)
+    else:
+        ffmpeg_pattern = "ffmpeg-win*.exe" if windows else "ffmpeg-macos*"
+        ffmpeg = Path(_probe_python(
+            python,
+            "import imageio_ffmpeg,pathlib; "
+            "p=pathlib.Path(imageio_ffmpeg.__file__).parent/'binaries'; "
+            f"b=list(p.glob({ffmpeg_pattern!r})); "
+            "assert len(b)==1,'bundled_ffmpeg_missing'; print(b[0])",
+            env,
+        ))
     if not windows:
         ffmpeg.chmod(ffmpeg.stat().st_mode | 0o100)
     source_asset = MANIFEST["whisperSource"]
     source = _ensure_source(runtime, windows=windows)
     if windows:
-        whisper = _prepare_windows_whisper(runtime, source)
+        whisper = _prepare_windows_whisper(runtime, source, architecture=architecture)
     else:
         whisper = _prepare_mac_whisper(runtime, source, python, env, log)
     model_path = _download_model(
@@ -355,10 +453,13 @@ def setup_audio(root, model="small", diarize=True, *, uv_path=None):
         "schemaVersion": 1, "modelPreset": model,
         "python": str(python), "ffmpeg": str(ffmpeg), "whisperCLI": str(whisper),
         "model": str(model_path), "sourceRevision": source_asset["revision"],
-        "platform": "windows-x86_64" if windows else "macos-" + platform.machine(),
+        "platform": ("windows-" if windows else "macos-") + architecture,
+        "architecture": architecture,
     }
     if windows:
-        config["engineArchiveSHA256"] = MANIFEST["whisperWindows"]["sha256"]
+        engine = MANIFEST["whisperWindowsArm64" if architecture == "arm64" else "whisperWindows"]
+        config["engineArchiveSHA256"] = engine["sha256"]
+        config["sourceRevision"] = engine["revision"]
     if diarize:
         for name, asset in MANIFEST["diarization"].items():
             path = _download_model(asset, models, f"Downloading speaker {name} model")

@@ -2,10 +2,20 @@
 name = "auday-workflow-audio"
 version = "0.2.0"
 requires-python = ">=3.12,<3.14"
-dependencies = ["cmake==3.31.6; sys_platform == 'darwin'", "imageio-ffmpeg==0.6.0"]
+dependencies = [
+    "cmake==3.31.6; sys_platform == 'darwin'",
+    "imageio-ffmpeg==0.6.0; sys_platform != 'win32' or (platform_machine != 'ARM64' and platform_machine != 'arm64' and platform_machine != 'aarch64')",
+]
 
 [project.optional-dependencies]
-diarization = ["numpy==2.2.6", "soundfile==0.13.1", "sherpa-onnx==1.13.5", "sherpa-onnx-core==1.13.5"]
+diarization = [
+    "numpy==2.2.6; sys_platform != 'win32' or (platform_machine != 'ARM64' and platform_machine != 'arm64' and platform_machine != 'aarch64')",
+    "numpy==2.3.4; sys_platform == 'win32' and (platform_machine == 'ARM64' or platform_machine == 'arm64' or platform_machine == 'aarch64')",
+    "soundfile==0.13.1; sys_platform != 'win32' or (platform_machine != 'ARM64' and platform_machine != 'arm64' and platform_machine != 'aarch64')",
+    "soundfile==0.14.0; sys_platform == 'win32' and (platform_machine == 'ARM64' or platform_machine == 'arm64' or platform_machine == 'aarch64')",
+    "sherpa-onnx==1.13.5",
+    "sherpa-onnx-core==1.13.5",
+]
 
 [tool.uv]
 package = false

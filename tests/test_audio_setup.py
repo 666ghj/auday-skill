@@ -57,6 +57,8 @@ class AudioSetupTests(unittest.TestCase):
             download_asset=Mock(side_effect=download),
             extract_tar=Mock(),
             managed_python_version=Mock(return_value="3.12.15"),
+            managed_python_request=Mock(return_value="cpython-3.13.16-windows-x86_64-none"),
+            host_architecture=Mock(return_value="x86_64"),
         )
 
         def run_transcription(config, audio, output, **kwargs):
@@ -78,6 +80,7 @@ class AudioSetupTests(unittest.TestCase):
             patch.object(audio_setup, "_run_transcription", side_effect=run_transcription),
             patch.object(audio_setup, "venv_python", return_value=self.python),
             patch.object(audio_setup, "_check_windows_audio_cpu"),
+            patch.object(audio_setup, "_check_windows_audio_python"),
         ]
         self.mocks = [p.start() for p in self.patches]
         for p in self.patches:
@@ -182,6 +185,8 @@ class AudioSetupTests(unittest.TestCase):
     def test_manifests_pin_remote_bytes_and_identify_licenses(self):
         manifest = audio_setup.MANIFEST
         assets = [manifest["whisperSource"], manifest["whisperWindows"],
+                  manifest["whisperWindowsArm64"], manifest["whisperOpenMPArm64"],
+                  manifest["ffmpegWindowsArm64"],
                   manifest["windowsRuntime"],
                   *manifest["models"].values(), *manifest["diarization"].values()]
         for asset in assets:
@@ -207,7 +212,7 @@ class AudioSetupTests(unittest.TestCase):
         self.mocks[3].assert_not_called()
         install.assert_called_once()
         command = self.mocks[4].call_args[0][0]
-        self.assertIn("3.13.16", command)
+        self.assertIn("cpython-3.13.16-windows-x86_64-none", command)
         self.assertIn("--no-build", command)
         self.assertIn("diarization", command)
         self.assertIn("ffmpeg-win*.exe", self.mocks[5].call_args[0][1])
@@ -239,12 +244,62 @@ class AudioSetupTests(unittest.TestCase):
         self.mocks[4].assert_not_called()
 
     def test_unsupported_host_stops_before_installation(self):
+        self.shared.host_architecture.return_value = "x86"
         with patch.object(audio_setup.platform, "system", return_value="Windows"), \
-                patch.object(audio_setup.platform, "machine", return_value="ARM64"):
+                patch.object(audio_setup.platform, "machine", return_value="x86"):
             with self.assertRaisesRegex(RuntimeError, "requires_macos_or_windows_x64"):
                 audio_setup.setup_audio(self.root)
         self.shared.ensure_uv.assert_not_called()
         self.shared.download_asset.assert_not_called()
+
+    def test_arm64_uses_native_engines_without_x64_cpu_requirements(self):
+        self.shared.host_architecture.return_value = "arm64"
+        self.shared.managed_python_version.return_value = "3.13.16"
+        self.shared.managed_python_request.return_value = "cpython-3.13.16-windows-aarch64-none"
+        with patch.object(audio_setup.platform, "system", return_value="Windows"), \
+                patch.object(audio_setup.platform, "machine", return_value="ARM64"), \
+                patch.object(audio_setup, "_prepare_windows_whisper", return_value=self.whisper) as whisper, \
+                patch.object(audio_setup, "_prepare_windows_arm64_ffmpeg", return_value=self.ffmpeg) as decoder:
+            result = audio_setup.setup_audio(self.root)
+        self.assertTrue(result["installed"])
+        self.assertTrue(result["diarizationReady"])
+        self.mocks[3].assert_not_called()
+        self.mocks[8].assert_not_called()
+        self.mocks[5].assert_not_called()
+        decoder.assert_called_once_with(self.runtime)
+        self.assertEqual(whisper.call_args.kwargs["architecture"], "arm64")
+        config = json.loads((self.runtime / "config.json").read_text())
+        self.assertEqual(config["architecture"], "arm64")
+        self.assertEqual(config["platform"], "windows-arm64")
+        self.assertEqual(config["sourceRevision"], audio_setup.MANIFEST["whisperWindowsArm64"]["revision"])
+        self.assertEqual(config["engineArchiveSHA256"], audio_setup.MANIFEST["whisperWindowsArm64"]["sha256"])
+        self.assertEqual(len(self.downloads), 3)
+        self.assertIn("cpython-3.13.16-windows-aarch64-none", self.mocks[4].call_args.args[0])
+        self.assertEqual(self.mocks[4].call_args.args[2]["UV_PROJECT_ENVIRONMENT"], str(self.runtime / "venv-arm64"))
+        self.mocks[9].assert_called_once_with(self.python, "arm64", {"PATH": "/usr/bin:/bin", "UV_PROJECT_ENVIRONMENT": str(self.runtime / "venv-arm64")})
+
+    def test_wrong_audio_python_architecture_stops_before_native_engine_downloads(self):
+        self.shared.host_architecture.return_value = "arm64"
+        self.mocks[9].side_effect = RuntimeError("audio_python_architecture_mismatch")
+        with patch.object(audio_setup.platform, "system", return_value="Windows"), \
+                patch.object(audio_setup, "_prepare_windows_whisper") as whisper, \
+                patch.object(audio_setup, "_prepare_windows_arm64_ffmpeg") as decoder:
+            with self.assertRaisesRegex(RuntimeError, "audio_python_architecture_mismatch"):
+                audio_setup.setup_audio(self.root)
+        self.shared.download_asset.assert_not_called()
+        whisper.assert_not_called()
+        decoder.assert_not_called()
+
+    def test_arm64_explicit_speaker_opt_out_preserves_transcription(self):
+        self.shared.host_architecture.return_value = "arm64"
+        with patch.object(audio_setup.platform, "system", return_value="Windows"), \
+                patch.object(audio_setup, "_prepare_windows_whisper", return_value=self.whisper), \
+                patch.object(audio_setup, "_prepare_windows_arm64_ffmpeg", return_value=self.ffmpeg):
+            result = audio_setup.setup_audio(self.root, diarize=False)
+        self.assertTrue(result["installed"])
+        self.assertFalse(result["diarizationReady"])
+        self.assertEqual(len(self.downloads), 1)
+        self.assertNotIn("--extra", self.mocks[4].call_args[0][0])
 
 
 class WindowsEngineInstallationTests(unittest.TestCase):
@@ -258,9 +313,14 @@ class WindowsEngineInstallationTests(unittest.TestCase):
         self.runtime = self.root / "runtime/audio"
         self.runtime.mkdir(parents=True)
         self.manifest = json.loads(json.dumps(audio_setup.MANIFEST))
+        self.arm_crt = json.loads((audio_setup.SCRIPT_ROOT / "windows-arm64-runtime.json").read_text())
         self.archives = {}
-        for label in ("whisperWindows", "windowsRuntime"):
-            asset = self.manifest[label]
+        fixtures = {key: self.manifest[key] for key in (
+            "whisperWindows", "windowsRuntime", "whisperWindowsArm64",
+            "whisperOpenMPArm64", "ffmpegWindowsArm64",
+        )}
+        fixtures["arm-crt"] = self.arm_crt
+        for label, asset in fixtures.items():
             archive = self.root / (label + ".zip")
             with zipfile.ZipFile(archive, "w") as output:
                 for item in asset["files"]:
@@ -269,7 +329,15 @@ class WindowsEngineInstallationTests(unittest.TestCase):
                     item["size"] = len(body)
                     output.writestr(item["member"], body)
                 output.writestr("debug_nonredist/forbidden.dll", b"not installed")
+                if label == "whisperWindowsArm64":
+                    output.writestr("Release/libomp140.aarch64.dll", b"nonredistributable upstream library")
             self.archives[asset["url"]] = archive
+        arm_license = self.root / "whisper-arm64-LICENSE"
+        arm_license.write_bytes(b"Synthetic current Whisper MIT license")
+        engine = self.manifest["whisperWindowsArm64"]
+        engine["licenseSHA256"] = hashlib.sha256(arm_license.read_bytes()).hexdigest()
+        engine["licenseSize"] = arm_license.stat().st_size
+        self.archives[engine["licenseDownloadURL"]] = arm_license
         def unpack(archive, destination):
             destination.mkdir()
             with zipfile.ZipFile(archive) as source:
@@ -280,14 +348,15 @@ class WindowsEngineInstallationTests(unittest.TestCase):
             extract_zip=Mock(side_effect=unpack),
             file_hash=lambda path: hashlib.sha256(Path(path).read_bytes()).hexdigest(),
         )
-        def install_crt(root, destination, *, openmp=False):
-            self.assertTrue(openmp)
+        def install_crt(root, destination, *, openmp=False, architecture="x86_64"):
+            self.assertEqual(openmp, architecture == "x86_64")
             self.assertTrue(destination.is_relative_to(root))
-            asset = self.manifest["windowsRuntime"]
+            asset = self.arm_crt if architecture == "arm64" else self.manifest["windowsRuntime"]
             with zipfile.ZipFile(self.archives[asset["url"]]) as archive:
                 for item in asset["files"]:
                     (destination / item["filename"]).write_bytes(archive.read(item["member"]))
-        self.crt = SimpleNamespace(ensure_windows_crt=Mock(side_effect=install_crt))
+        self.crt = SimpleNamespace(ensure_windows_crt=Mock(side_effect=install_crt),
+                                   crt_asset=Mock(return_value=self.arm_crt))
         self.patches = [patch.dict(sys.modules, {"setup_runtime": self.shared, "windows_crt": self.crt}),
                         patch.object(audio_setup, "MANIFEST", self.manifest)]
         for patcher in self.patches:
@@ -323,6 +392,61 @@ class WindowsEngineInstallationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "file_verification_failed"):
             audio_setup._prepare_windows_whisper(self.runtime, self.source)
         self.assertFalse((self.runtime / self.manifest["whisperWindows"]["directory"]).exists())
+
+    def test_arm64_installs_native_engine_and_redistributable_openmp_only(self):
+        executable = audio_setup._prepare_windows_whisper(
+            self.runtime, self.source, architecture="arm64",
+        )
+        release = executable.parent
+        self.assertTrue(executable.is_file())
+        self.assertEqual(
+            {p.name for p in release.iterdir()},
+            {item["filename"] for key in ("whisperWindowsArm64", "whisperOpenMPArm64")
+             for item in self.manifest[key]["files"]}
+            | {item["filename"] for item in self.arm_crt["files"]},
+        )
+        # This replacement comes from LLVM, not the excluded DLL inside Whisper.
+        self.assertEqual((release / "libomp140.aarch64.dll").read_bytes(), b"synthetic-libomp140.aarch64.dll")
+        self.assertTrue((release / "LICENSE-LLVM-OpenMP").is_file())
+        self.assertFalse((release / "vcomp140.dll").exists())
+        self.assertFalse((release / "vcruntime140_1.dll").exists())
+        self.crt.ensure_windows_crt.assert_called_once()
+        self.assertEqual(self.crt.ensure_windows_crt.call_args.args[0], self.root)
+        self.assertEqual(self.crt.ensure_windows_crt.call_args.kwargs, {"architecture": "arm64"})
+        self.shared.download_asset.reset_mock()
+        self.assertEqual(audio_setup._prepare_windows_whisper(
+            self.runtime, self.source, architecture="arm64"), executable)
+        self.shared.download_asset.assert_not_called()
+
+    def test_arm64_rejects_corrupt_openmp_without_publishing_engine(self):
+        self.manifest["whisperOpenMPArm64"]["files"][0]["sha256"] = "0" * 64
+        with self.assertRaisesRegex(ValueError, "file_verification_failed"):
+            audio_setup._prepare_windows_whisper(self.runtime, self.source, architecture="arm64")
+        self.assertFalse((self.runtime / self.manifest["whisperWindowsArm64"]["directory"]).exists())
+
+    def test_arm64_decoder_keeps_license_and_reuses_verified_files(self):
+        executable = audio_setup._prepare_windows_arm64_ffmpeg(self.runtime)
+        self.assertTrue(executable.is_file())
+        self.assertEqual({p.name for p in executable.parent.iterdir()},
+                         {"ffmpeg.exe", "LICENSE.txt", "provenance.json"})
+        self.shared.download_asset.reset_mock()
+        self.assertEqual(audio_setup._prepare_windows_arm64_ffmpeg(self.runtime), executable)
+        self.shared.download_asset.assert_not_called()
+
+    def test_arm64_corrupt_decoder_is_preserved_without_downloading(self):
+        executable = audio_setup._prepare_windows_arm64_ffmpeg(self.runtime)
+        executable.write_bytes(b"changed")
+        self.shared.download_asset.reset_mock()
+        with self.assertRaisesRegex(ValueError, "existing_audio_decoder_incomplete"):
+            audio_setup._prepare_windows_arm64_ffmpeg(self.runtime)
+        self.assertEqual(executable.read_bytes(), b"changed")
+        self.shared.download_asset.assert_not_called()
+
+    def test_arm64_wrong_decoder_member_hash_never_promotes_installation(self):
+        self.manifest["ffmpegWindowsArm64"]["files"][0]["sha256"] = "0" * 64
+        with self.assertRaisesRegex(ValueError, "file_verification_failed"):
+            audio_setup._prepare_windows_arm64_ffmpeg(self.runtime)
+        self.assertFalse((self.runtime / self.manifest["ffmpegWindowsArm64"]["directory"]).exists())
 
 
 class WindowsVerificationAssetTests(unittest.TestCase):
