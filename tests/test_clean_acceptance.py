@@ -11,17 +11,18 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools"))
 from check_clean_setup import (
-    FORBIDDEN_TOOLS, audit_windows_dependencies, clean_environment,
-    install_windows_tool_traps, pe_imports,
+    FORBIDDEN_TOOLS, audit_windows_architecture, audit_windows_dependencies, clean_environment,
+    install_windows_tool_traps, pe_architecture, pe_imports, verify_windows_host,
 )
 
 
-def pe_fixture(path, imports, delayed=()):
+def pe_fixture(path, imports, delayed=(), *, machine=0x8664):
     """Minimal PE32+ layout with ordinary/delay import tables and DLL names."""
     data = bytearray(4096)
     data[:2] = b"MZ"
     struct.pack_into("<I", data, 0x3C, 0x80)
     data[0x80:0x84] = b"PE\0\0"
+    struct.pack_into("<H", data, 0x84, machine)
     struct.pack_into("<H", data, 0x86, 1)
     struct.pack_into("<H", data, 0x94, 240)
     optional = 0x98
@@ -119,6 +120,46 @@ class CleanAcceptanceTests(unittest.TestCase):
         path = pe_fixture(self.root / "engine.exe", ["KERNEL32.dll", "VCRUNTIME140.dll"],
                           ["MSVCP140.dll"])
         self.assertEqual(pe_imports(path), ["kernel32.dll", "msvcp140.dll", "vcruntime140.dll"])
+
+    def test_architecture_parser_distinguishes_native_windows_binaries(self):
+        for machine, architecture in ((0x8664, "x86_64"), (0xAA64, "arm64"), (0xA64E, "arm64x")):
+            with self.subTest(architecture=architecture):
+                path = pe_fixture(self.root / "engine.exe", [], machine=machine)
+                self.assertEqual(pe_architecture(path), architecture)
+        path = pe_fixture(self.root / "engine.exe", [], machine=0x14C)
+        with self.assertRaisesRegex(ValueError, "unsupported_pe_machine"):
+            pe_architecture(path)
+
+    def test_windows_host_rejects_emulated_python_on_native_arm64(self):
+        python = pe_fixture(self.root / "python.exe", [])
+        with patch("check_clean_setup.windows_native_architecture", return_value="arm64"), \
+                patch("check_clean_setup.sys.executable", str(python)):
+            with self.assertRaisesRegex(AssertionError, "Expected native arm64 Python"):
+                verify_windows_host("arm64")
+        pe_fixture(python, [], machine=0xAA64)
+        with patch("check_clean_setup.windows_native_architecture", return_value="arm64"), \
+                patch("check_clean_setup.sys.executable", str(python)):
+            self.assertEqual(verify_windows_host("arm64"), {"host": "arm64", "python": "arm64"})
+            with self.assertRaisesRegex(AssertionError, "Expected x86_64 Windows host"):
+                verify_windows_host("x86_64")
+
+    def test_runtime_audit_rejects_x64_executable_on_arm64(self):
+        executable = pe_fixture(self.root / "llama-server.exe", [])
+        with self.assertRaisesRegex(AssertionError, "Expected native arm64 executable"):
+            audit_windows_architecture([executable], self.root, "arm64")
+        pe_fixture(executable, [], machine=0xAA64)
+        self.assertEqual(audit_windows_architecture([executable], self.root, "arm64"), [
+            {"binary": "llama-server.exe", "architecture": "arm64"},
+        ])
+
+    def test_native_dependency_audit_rejects_foreign_dll_and_accepts_arm64x_crt(self):
+        engine = pe_fixture(self.root / "engine.exe", ["VCRUNTIME140.dll"], machine=0xAA64)
+        dependency = pe_fixture(self.root / "VCRUNTIME140.dll", [])
+        with self.assertRaisesRegex(AssertionError, "Wrong native dependency architecture"):
+            audit_windows_dependencies([engine], self.root, self.root / "Windows", "arm64")
+        pe_fixture(dependency, [], machine=0xA64E)
+        report = audit_windows_dependencies([engine], self.root, self.root / "Windows", "arm64")
+        self.assertEqual({row["architecture"] for row in report}, {"arm64", "arm64x"})
 
     def test_dependency_audit_rejects_system_only_visual_cpp_runtime(self):
         system = self.root / "Windows"
