@@ -46,6 +46,18 @@ class WindowsLinkBoundaries(unittest.TestCase):
             with self.assertRaisesRegex(link.LinkError, "python_313_with_tls_psk_required"):
                 link.tls_context(generated_password())
 
+    def test_probe_reports_interpreter_target_instead_of_host_architecture(self):
+        for target in ("win-arm64", "win-amd64", "macosx-11.0-arm64"):
+            with self.subTest(target=target), \
+                    mock.patch.object(link, "tls_context"), \
+                    mock.patch.object(link, "_zeroconf"), \
+                    mock.patch.object(link.sysconfig, "get_platform", return_value=target), \
+                    contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(link.main(["probe"]), 0)
+            result = json.loads(output.getvalue())
+            self.assertTrue(result["tlsPSK"])
+            self.assertEqual(result["interpreterPlatform"], target)
+
     def test_pair_requires_real_local_console(self):
         with mock.patch.object(sys, "stdin", io.StringIO("must-not-read")):
             with self.assertRaisesRegex(link.LinkError, "controlling_local_terminal"):

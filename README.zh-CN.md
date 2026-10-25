@@ -20,7 +20,7 @@
 
 <p align="center"><a href="https://auday.ai/">访问官网 auday.ai</a></p>
 
-这个仓库提供 **Auday 的桌面端 Skill**，将 App 中已保存的资料接入你常用的 AI 助手，用于检索、写作，以及借助 Windows 或 Mac 的本地算力进行更深入的音频分析。手机数据始终只读，使用的信息保留来源。
+这个仓库提供 **Auday 的桌面端 Skill**，将 App 中已保存的资料接入你常用的 AI 助手，用于检索、写作，以及借助 Windows 或 Mac 的本地算力进行更深入的音频分析。Windows 11 ARM64 电脑也在支持范围内。手机数据始终只读，使用的信息保留来源。
 
 **iPhone 与 Windows 或 Mac 电脑通过本地加密协议直接传输 Auday 数据，不经过任何云端服务器中转。**
 
@@ -34,7 +34,7 @@
 
 Agent 会使用所在软件的原生 Skill 安装工具，检查电脑的环境并准备所需工具。你不必先自行安装全局 Python，也不用照着命令逐条操作。Windows 不需要 WSL、Homebrew、MSVC 编译工具或 GPU；Mac 不需要 Homebrew。如果 macOS 需要系统密码或许可确认，Agent 会解释对应的系统步骤，完成后继续。
 
-首次使用时，Agent 会推荐一次**本地语义检索**：下载 333.59 MB 模型，以及 Mac 约 11.2 MB、Windows 约 18.43 MB 的运行程序压缩包。Windows 还会按需准备约 3.22 MB 的独立 Microsoft 运行时包，不做系统级安装。如需准备基础环境，还会有额外下载，大小因操作系统而异。解压文件和后续索引需要额外空间。你可以现在安装或稍后再装，选择会被保存，不会重复提示；不安装也可以使用关键词检索，之后可随时要求 Agent 准备语义检索。模型使用须遵循 [Gemma 条款](https://ai.google.dev/gemma/terms)。
+首次使用时，Agent 会推荐一次**本地语义检索**：下载 333.59 MB 模型，以及 Mac 约 11.2 MB、Windows x64 约 18.43 MB、Windows ARM64 约 11.99 MB 的运行程序压缩包。Windows 还会按需准备独立 Microsoft 运行时包：x64 约 3.22 MB，ARM64 约 5.05 MB，不做系统级安装。如需准备基础环境，还会有额外下载，大小因操作系统而异。解压文件和后续索引需要额外空间。你可以现在安装或稍后再装，选择会被保存，不会重复提示；不安装也可以使用关键词检索，之后可随时要求 Agent 准备语义检索。模型使用须遵循 [Gemma 条款](https://ai.google.dev/gemma/terms)。
 
 **转写按需准备。** 当你提出转写需求，Agent 会选择一套合适的模型，完成下载、校验、配置和运行验证。默认包含匿名说话人分段；直接说“不要说话人识别”，就会跳过相关模型和依赖。
 
@@ -64,8 +64,9 @@ Agent 可以用关键词查找原词，也可以用[本地语义检索](referenc
 
 ## 运行要求
 
-- **Windows：**Windows 10 或 Windows 11，x64 架构。Agent 通过 PowerShell 5.1 配置脚本准备专用的 `uv` 0.13.3 和受管理的 Python 3.13.16，使用预构建的本地模型运行程序。以 CPU 运行为基础，不要求 GPU、WSL、Homebrew、MSVC 编译工具或已有全局 Python。
+- **Windows：**支持 Windows 10/11 x64 和 Windows 11 ARM64。Agent 通过 PowerShell 5.1 配置脚本检测系统的原生架构，准备专用的 `uv` 0.13.3、原生 Python 3.13.16 和对应架构的本地模型运行程序。以 CPU 运行为基础，不要求 GPU、WSL、Homebrew、MSVC 编译工具或已有全局 Python。
 - **Mac：**基础客户端需要 macOS 13 或更新版本；指定的语义运行程序需要 macOS 13.3 或更新版本。手机连接和内置音频工具构建需要带有 Swift 5.9 或更新版本的 Xcode Command Line Tools。Agent 会检查，缺失时可启动 Apple 安装器；需要你本人完成的系统对话框仍在本机处理。首次配置脚本按需准备专用的 `uv` 和受管理的 Python，不要求已有全局 Python 或 Homebrew。
+- Linux 和 Windows 10 ARM64 暂不在支持范围内。可选本地模型另有处理器要求，配置时会分别验证。
 - 带有「接入你的工作流」功能的 Auday iPhone 版本，iPhone 和电脑连接同一个 Wi-Fi。
 - 模型不随安装包提供，由 Agent 在所选能力的配置流程中下载、校验哈希，并确认本地可运行。
 
@@ -73,7 +74,7 @@ Agent 可以用关键词查找原词，也可以用[本地语义检索](referenc
 
 需要深入分析录音时，[音频处理指南](references/audio.md)介绍 Windows 与 Mac 的处理流程，[语言策略指南](references/audio-language-routing.md)会指导 Agent 按日语、中文及方言、英语、韩语、法语、德语和多语言混合等情况选择方案；[Mac 音频指南](references/mac-audio-models.md)仅针对 Mac，补充说话人分析与资源安排。Agent 可以根据实际录音调整工具，也可以复用已经适合你的方案。
 
-内置转写配置可按电脑和任务选择多语言 Whisper `small` Q5_1（190.09 MB）或 large-v3-`turbo` Q5_0（574.04 MB），默认另配约 30 MB 的说话人模型；运行程序和依赖还需额外下载。Agent 只安装选定的一套并在之后复用，指南中的其他引擎需单独配置。匿名说话人标签不代表真实身份识别。Windows 的这个本地转写运行程序要求 CPU 支持 AVX2、FMA 和 F16C；不满足这些音频要求时，基础连接、文字同步和可读文件导出仍可使用。
+内置转写配置可按电脑和任务选择多语言 Whisper `small` Q5_1（190.09 MB）或 large-v3-`turbo` Q5_0（574.04 MB），默认另配约 30 MB 的说话人模型；运行程序和依赖还需额外下载。Agent 只安装选定的一套并在之后复用，指南中的其他引擎需单独配置。匿名说话人标签不代表真实身份识别。Windows x64 的本地转写运行程序要求 CPU 支持 AVX2、FMA 和 F16C；ARM64 使用独立的原生引擎。若某个可选模型运行程序与处理器不兼容，基础连接、文字同步、关键词检索和可读文件导出仍可使用。
 
 ## 数据与隐私
 
@@ -94,7 +95,7 @@ Agent 可以用关键词查找原词，也可以用[本地语义检索](referenc
 
 ## 开发与验证
 
-既有 Mac 首次安装在全新 Apple Silicon 和 Intel 运行器上的验证范围与边界，见[首次安装验收记录](docs/first-run-validation.md)。该记录不代表 Windows CI 或 Windows 与真实 iPhone 的连接已通过验证。Windows 运行时使用受管理的 Python 3.13.16；Windows 兼容性需要 Windows CI 验证，真实手机连接还需独立的实机验证。
+已记录的安装验证范围与边界见[首次安装验收记录](docs/first-run-validation.md)。Windows 运行时使用受管理的 Python 3.13.16，CI 分别覆盖原生 x64 和 ARM64 环境。CI 或合成连接测试通过，不代表 Windows 与真实 iPhone 的局域网连接已通过实机验证。
 
 以下命令用于 Mac 开发环境，其中 Swift 测试仅适用于 Mac：
 

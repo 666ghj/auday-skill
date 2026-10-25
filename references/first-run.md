@@ -26,10 +26,11 @@ In the remaining examples, `<auday>` means that full platform-specific prefix, w
 
 | Host | Supported setup | Platform requirements |
 | --- | --- | --- |
-| Windows | Windows 10/11 x64, Windows PowerShell 5.1 | Private Python 3.13.16; no pre-installed Python, WSL, Homebrew, MSVC, or separate GPU is needed |
+| Windows x64 | Windows 10/11, Windows PowerShell 5.1 | Native private Python 3.13.16; no pre-installed Python, WSL, Homebrew, MSVC, or separate GPU is needed |
+| Windows ARM64 | Windows 11, Windows PowerShell 5.1 | Native private Python 3.13.16 and ARM64 model runtimes; the same commands and no developer tools are needed |
 | macOS | macOS 13 or later; Apple Silicon or Intel | Private Python 3.12.15; the pinned semantic runtime requires macOS 13.3 or later; connection/audio builds require Apple developer tools |
 
-Windows ARM64 and Linux are outside this setup baseline. Check each capability independently: an unavailable optional runtime must not block available keyword search or readable exports. Do not install a binary for a different architecture.
+Linux and Windows 10 ARM64 are outside this setup baseline. The Windows entrypoint detects the native OS architecture even from an emulated x64 agent; use its result rather than the agent process's architecture. Check each capability independently: an unavailable optional runtime must not block available connection, keyword search, or readable exports. Do not install a binary for a different architecture.
 
 ## Prepare the base environment
 
@@ -40,7 +41,7 @@ Windows ARM64 and Linux are outside this setup baseline. Check each capability i
 
 The bootstrap prepares private `uv` 0.13.3 and the host's managed Python without relying on a global Python or package manager. Read the selected download sizes from the setup output; the base environment and platform dependencies are additional to model downloads, and extracted files use more disk space. `doctor` checks the environment, and `setup` reads saved onboarding state and capability suggestions.
 
-On Windows, the entrypoint prepares the locked Python connection environment, including Bonjour discovery through `zeroconf` and Python's TLS-PSK support. It uses prebuilt audio tools. `-ExecutionPolicy Bypass` affects only the launched PowerShell process; do not change the user's persistent execution policy. If an organization blocks scripts or network access, explain that specific policy and continue with available cached capabilities; do not disable security software.
+On Windows, the entrypoint prepares the locked Python connection environment, including Bonjour discovery through `zeroconf` and Python's TLS-PSK support. ARM64 uses the pinned pure-Python `zeroconf` build with hash-locked build dependencies; no Cython or compiler is required. Audio tools are prebuilt for the native architecture. `-ExecutionPolicy Bypass` affects only the launched PowerShell process; do not change the user's persistent execution policy. If an organization blocks scripts or network access, explain that specific policy and continue with available cached capabilities; do not disable security software.
 
 On macOS, phone discovery and encrypted connection use a bundled Swift bridge that requires Swift 5.9 or later. The integrated audio setup also needs Apple's compiler to build Whisper.cpp. If Xcode Command Line Tools are missing, the agent can start the macOS installer:
 
@@ -60,7 +61,7 @@ At the first onboarding, recommend installing local semantic search so the user 
 
 > I recommend preparing local semantic search so I can find ideas even when you use different words. The model is 333.59 MB, with a small local runtime and base tools downloaded separately. It runs on this computer. Shall I prepare it now, or leave it for later?
 
-Give the relevant runtime download size: about 11.2 MB on Mac or 18.43 MB for Windows x64, plus about 3.22 MB for a private Microsoft runtime package on Windows when needed. Explain that extraction and future indexes need additional disk space.
+Give the relevant runtime download size: about 11.2 MB on Mac, 18.43 MB for Windows x64, or 11.99 MB for Windows ARM64. Windows may also need its private Microsoft runtime package: about 3.22 MB for x64 or 5.05 MB for ARM64. Explain that extraction and future indexes need additional disk space.
 
 Mention the model's [Gemma terms](https://ai.google.dev/gemma/terms) when presenting this setup. This does not make the entire desktop assistant local: relevant excerpts returned to a cloud assistant can still reach its model.
 
@@ -71,6 +72,8 @@ If the user already asked to configure semantic search, proceed under that reque
 ```
 
 The setup downloads the pinned compatible runtime and complete model, verifies SHA-256 hashes, saves the local configuration, and runs a small synthetic verification. Only successful verification means the semantic capability is ready. It can be prepared before pairing; the user's actual archive is indexed after the first successful sync.
+
+The pinned Windows ARM64 semantic engine targets ARMv8.7-A. An older ARM processor may run the base client but fail this optional engine's runtime check. Report that capability limit and retain keyword search and export; do not retry with an x64 binary or treat it as a failed phone connection. See [semantic search](semantic-search.md) for the exact runtime.
 
 The selected installation is remembered before downloads begin. If it is
 interrupted, `setup` reports `resume_semantic_setup`; continue the requested
@@ -108,7 +111,7 @@ For a new environment, the integrated Whisper.cpp route supplies two executable 
 | `small` — Whisper small Q5_1 | 190.09 MB | Limited memory, a CPU-first Windows workflow, or a lightweight first pass |
 | `turbo` — Whisper large-v3-turbo Q5_0 | 574.04 MB | Enough memory and a task that warrants the larger multilingual model |
 
-These are model downloads, not complete installed size or peak memory. Windows installs an official prebuilt Whisper.cpp CPU runtime and a matching FFmpeg binary; it does not compile them or require a GPU. That audio runtime requires AVX2, FMA, and F16C CPU features. Check this capability before large audio downloads; a failed audio CPU check does not block ordinary connection, text sync, keyword retrieval, or readable exports. Mac builds the selected Whisper.cpp runtime with Apple tools. Read the download sizes and model choices returned by `setup`, then explain the selected downloads before starting; a request to prepare transcription already authorizes the necessary setup. Do not install both models by default.
+These are model downloads, not complete installed size or peak memory. Windows installs an official prebuilt Whisper.cpp CPU runtime and a matching FFmpeg binary for x64 or ARM64; it does not compile them or require a GPU. The x64 audio runtime requires AVX2, FMA, and F16C. Check the selected platform and processor prerequisites before audio setup; a failed audio capability does not block ordinary connection, text sync, keyword retrieval, or readable exports. Mac builds the selected Whisper.cpp runtime with Apple tools. Read the download sizes and model choices returned by `setup`, then explain the selected downloads before starting; a request to prepare transcription already authorizes the necessary setup. Do not install both models by default.
 
 Allow room for extracted runtimes, build products, and resumable download caches.
 As a practical starting allowance, keep at least 1 GB free for semantic setup,

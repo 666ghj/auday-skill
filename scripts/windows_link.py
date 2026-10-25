@@ -15,6 +15,7 @@ import socket
 import ssl
 import struct
 import sys
+import sysconfig
 import threading
 import time
 
@@ -322,7 +323,8 @@ def main(argv=None):
             tls_context("23456789ABCDEFGH")  # Public synthetic capability check only.
             _zeroconf()
             result = {"ok": True, "python": list(sys.version_info[:3]), "tlsPSK": True,
-                      "cipherSuite": "0xccac", "discovery": "zeroconf"}
+                      "cipherSuite": "0xccac", "discovery": "zeroconf",
+                      "interpreterPlatform": sysconfig.get_platform()}
         elif args.command == "discover":
             if args.peer_to_peer:
                 raise LinkError("windows_requires_same_wifi_peer_to_peer_unavailable")

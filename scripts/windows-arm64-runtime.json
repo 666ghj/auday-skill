@@ -1,0 +1,26 @@
+{
+  "name": "Microsoft Visual C++ ARM64 runtime 14.44.35211",
+  "architecture": "arm64",
+  "url": "https://download.visualstudio.microsoft.com/download/pr/45d3b8dd-bced-4b37-9974-142f748d710c/fc8f37250188509818258582758a3b704810c77b6d25845486d583ea99d9aa1f/Microsoft.VC.14.44.17.14.CRT.Redist.ARM64.base.vsix",
+  "sha256": "fc8f37250188509818258582758a3b704810c77b6d25845486d583ea99d9aa1f",
+  "size": 5046547,
+  "license": "Microsoft Visual Studio Redistributable Code",
+  "licenseURL": "https://visualstudio.microsoft.com/license-terms/vs2022-cruntime/",
+  "sourceDocumentation": "https://learn.microsoft.com/en-us/cpp/windows/deployment-in-visual-cpp",
+  "redistributionDocumentation": "https://learn.microsoft.com/en-us/visualstudio/releases/2022/redistribution",
+  "files": [
+    {
+      "member": "Contents/VC/Redist/MSVC/14.44.35112/arm64/Microsoft.VC143.CRT/msvcp140.dll",
+      "filename": "msvcp140.dll",
+      "sha256": "045faeab0b5710816ae160ea20dae8495ffc11bb51feca15d22aaf7ff3752cb3",
+      "size": 1372216
+    },
+    {
+      "member": "Contents/VC/Redist/MSVC/14.44.35112/arm64/Microsoft.VC143.CRT/vcruntime140.dll",
+      "filename": "vcruntime140.dll",
+      "sha256": "d8a8513921544569837e400d37cc71302819967ae6defa932266a7ecb41dbaf9",
+      "size": 199200
+    }
+  ],
+  "notes": "Install only the two ARM64 release runtime imports used by the pinned native llama.cpp and Whisper engines. Their LLVM OpenMP DLL is included in each engine archive. Windows 11 provides the Universal CRT. No DLLs are redistributed in this repository."
+}

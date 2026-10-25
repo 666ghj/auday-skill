@@ -63,7 +63,9 @@
     "cmake": "3.31.6",
     "imageio-ffmpeg": "0.6.0",
     "sherpa-onnx": "1.13.5",
-    "notes": "Packages and wheel hashes are pinned in uv.lock. Windows uses CPython 3.13.16 and macOS uses 3.12.15; CMake is macOS-only. imageio-ffmpeg includes its own platform-specific ffmpeg binary; no global ffmpeg is used. See installed wheel license files for the wrapper and bundled ffmpeg licenses."
+    "notes": "Packages and wheel hashes are pinned in uv.lock. Windows uses CPython 3.13.16 and macOS uses 3.12.15; CMake is macOS-only. Mac and Windows x64 use imageio-ffmpeg. Windows ARM64 uses a separate pinned native FFmpeg archive, NumPy 2.3.4, and SoundFile 0.14.0; other platforms retain their existing audio dependency versions.",
+    "numpyWindowsArm64": "2.3.4",
+    "soundfileWindowsArm64": "0.14.0"
   },
   "whisperWindows": {
     "name": "whisper.cpp v1.7.6 Windows x64 CPU",
@@ -151,5 +153,104 @@
     ],
     "notes": "Download the official VSIX privately and install only these four release DLLs beside Whisper. Do not copy debug_nonredist or LLVM OpenMP files. Windows 10/11 provides the Universal CRT. No DLLs are redistributed in this repository.",
     "redistributionDocumentation": "https://learn.microsoft.com/en-us/visualstudio/releases/2022/redistribution"
+  },
+  "whisperWindowsArm64": {
+    "name": "whisper.cpp v1.9.5 Windows ARM64 CPU (b5454)",
+    "revision": "d1be6fde11ac6e0407606b4e42fe72d34add8037",
+    "url": "https://github.com/ggml-org/whisper.cpp/releases/download/b5454/whisper-bin-win-cpu-arm64.zip",
+    "sha256": "28c37e7b598c3d9bbfef94f3bd67f2ee6f12b7c86f3da5edcf5e4308d615ff6d",
+    "size": 4371193,
+    "directory": "whisper-windows-arm64-b5454",
+    "executable": "Release/whisper-cli.exe",
+    "license": "MIT",
+    "licenseURL": "https://github.com/ggml-org/whisper.cpp/blob/d1be6fde11ac6e0407606b4e42fe72d34add8037/LICENSE",
+    "files": [
+      {
+        "member": "Release/whisper-cli.exe",
+        "filename": "whisper-cli.exe",
+        "sha256": "59dfbb9c0ecdb9a295b5646188005a2840e5c42a5fca134ff15bc95eba027e7c",
+        "size": 706560
+      },
+      {
+        "member": "Release/whisper.dll",
+        "filename": "whisper.dll",
+        "sha256": "48214430bbfce6cd656125c06d1c368286412681dab0242061c5cafa57913419",
+        "size": 450560
+      },
+      {
+        "member": "Release/ggml.dll",
+        "filename": "ggml.dll",
+        "sha256": "bd4a483fd315a95a66f43283c710f77d42cc13315829cb0a3ecffc30b843ac9f",
+        "size": 61440
+      },
+      {
+        "member": "Release/ggml-base.dll",
+        "filename": "ggml-base.dll",
+        "sha256": "7c8698821411149cfdebf587a26263bcb43e7ab396759e24eb641f665b10b45e",
+        "size": 683520
+      },
+      {
+        "member": "Release/ggml-cpu.dll",
+        "filename": "ggml-cpu.dll",
+        "sha256": "139a72c067da8862aea7d19246668884852c444af343761c1535dc32bed2ad81",
+        "size": 772608
+      }
+    ],
+    "notes": "Official native ARM64 CPU engine at the same commit as v1.9.5. The archive OpenMP DLL is excluded; install the separately pinned redistributable LLVM runtime. No compiler, GPU, x64 emulation, or AVX requirement.",
+    "licenseDownloadURL": "https://raw.githubusercontent.com/ggml-org/whisper.cpp/d1be6fde11ac6e0407606b4e42fe72d34add8037/LICENSE",
+    "licenseSHA256": "94f29bbed6a22c35b992c5c6ebf0e7c92f13b836b90f36f461c9cf2f0f1d010d",
+    "licenseSize": 1078
+  },
+  "ffmpegWindowsArm64": {
+    "name": "FFmpeg 8.1.2 Windows ARM64 LGPL (BtbN month-end build)",
+    "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-31-13-27/ffmpeg-n8.1.2-50-g1a748fe2cd-winarm64-lgpl-8.1.zip",
+    "sha256": "0ad4d6e7342d6d77bbae4ac230964ebd51bdd6192414392e5f521d295b39b111",
+    "size": 95498313,
+    "directory": "ffmpeg-windows-arm64-8.1.2-20260831",
+    "executable": "ffmpeg.exe",
+    "license": "LGPL-3.0-or-later",
+    "licenseURL": "https://ffmpeg.org/legal.html",
+    "sourceDocumentation": "https://ffmpeg.org/download.html",
+    "buildSource": "https://github.com/BtbN/FFmpeg-Builds/tree/autobuild-2026-08-31-13-27",
+    "files": [
+      {
+        "member": "ffmpeg-n8.1.2-50-g1a748fe2cd-winarm64-lgpl-8.1/bin/ffmpeg.exe",
+        "filename": "ffmpeg.exe",
+        "sha256": "0dcbceced02edf3f6a3a7b919515b2cd8dbefbce101e432ed952b566fc9ae6cd",
+        "size": 63947264
+      },
+      {
+        "member": "ffmpeg-n8.1.2-50-g1a748fe2cd-winarm64-lgpl-8.1/LICENSE.txt",
+        "filename": "LICENSE.txt",
+        "sha256": "da7eabb7bafdf7d3ae5e9f223aa5bdc1eece45ac569dc21b3b037520b4464768",
+        "size": 7651
+      }
+    ],
+    "notes": "FFmpeg official download page links BtbN. Pin the August month-end archive (retained for two years), before the September 24-October 3 LLVM strip regression documented in BtbN/FFmpeg-Builds#675. Native ARM64 CPU binary, no global install. Only ffmpeg.exe and its license are installed; setup checks executable startup before model downloads.",
+    "knownRegression": "https://github.com/BtbN/FFmpeg-Builds/issues/675"
+  },
+  "whisperOpenMPArm64": {
+    "name": "LLVM OpenMP 20.1.8 Windows ARM64 (via llama.cpp b10865)",
+    "url": "https://github.com/ggml-org/llama.cpp/releases/download/b10865/llama-b10865-bin-win-cpu-arm64.zip",
+    "sha256": "2bf688e9c7da0cf576f8f8e40ff732a4894d859b5d867eebbb8d45cb61f86409",
+    "size": 11991875,
+    "license": "Apache-2.0 WITH LLVM-exception",
+    "licenseURL": "https://github.com/llvm/llvm-project/blob/llvmorg-20.1.8/openmp/LICENSE.TXT",
+    "sourceDocumentation": "https://github.com/ggml-org/llama.cpp/blob/b10865/ggml/src/CMakeLists.txt",
+    "files": [
+      {
+        "member": "libomp.dll",
+        "filename": "libomp140.aarch64.dll",
+        "sha256": "26caae17f29aaf2238f664375b663cd306d596bc9e36e780fa88356c51fe876a",
+        "size": 764928
+      },
+      {
+        "member": "LICENSE-LLVM-OpenMP",
+        "filename": "LICENSE-LLVM-OpenMP",
+        "sha256": "fdad1758a9e1f9d5a81e18879b3406772115edc92c24bfa36b70c654f325e8e4",
+        "size": 19741
+      }
+    ],
+    "notes": "Only LLVM libomp.dll and its bundled license are extracted. Upstream llama.cpp takes these files from the official LLVM 20.1.8 woa64 installer. Copy the verified DLL under the import name required by Whisper; never use the Visual Studio debug_nonredist DLL included in Whisper."
   }
 }

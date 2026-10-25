@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import shutil
 import sqlite3
 import struct
 import subprocess
@@ -24,6 +25,7 @@ from install import install
 
 ROOT = Path(__file__).resolve().parents[1]
 FORBIDDEN_TOOLS = ("python", "python3", "uv", "ffmpeg", "whisper-cli", "cmake")
+WINDOWS_MACHINES = {0x8664: "x86_64", 0xAA64: "arm64", 0xA64E: "arm64x"}
 
 
 def file_hash(path):
@@ -125,6 +127,60 @@ def install_windows_tool_traps(powershell, environment, *, build_parent=None):
         proof.unlink(missing_ok=True)
 
 
+def pe_architecture(path):
+    """Read the executable's machine type; platform.machine can hide emulation."""
+    with Path(path).open("rb") as source:
+        header = source.read(64)
+        if len(header) != 64 or header[:2] != b"MZ":
+            raise ValueError("not_a_pe_binary: " + str(path))
+        source.seek(struct.unpack_from("<I", header, 0x3C)[0])
+        signature = source.read(6)
+    if len(signature) != 6 or signature[:4] != b"PE\0\0":
+        raise ValueError("invalid_pe_header")
+    machine = struct.unpack_from("<H", signature, 4)[0]
+    if machine not in WINDOWS_MACHINES:
+        raise ValueError("unsupported_pe_machine: " + hex(machine))
+    return WINDOWS_MACHINES[machine]
+
+
+def windows_native_architecture():
+    """Get the hardware/OS machine type even inside an emulated test harness."""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel.IsWow64Process2.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.USHORT),
+                                      ctypes.POINTER(wintypes.USHORT)]
+    kernel.IsWow64Process2.restype = wintypes.BOOL
+    process, native = wintypes.USHORT(), wintypes.USHORT()
+    if not kernel.IsWow64Process2(kernel.GetCurrentProcess(), ctypes.byref(process), ctypes.byref(native)):
+        raise OSError(ctypes.get_last_error(), "IsWow64Process2 failed")
+    if native.value not in (0x8664, 0xAA64):
+        raise ValueError("unsupported_windows_machine: " + hex(native.value))
+    return WINDOWS_MACHINES[native.value]
+
+
+def verify_windows_host(expected):
+    native = windows_native_architecture()
+    python = pe_architecture(sys.executable)
+    assert native == expected, f"Expected {expected} Windows host, found {native}"
+    assert python == expected, f"Expected native {expected} Python, found {python}"
+    return {"host": native, "python": python}
+
+
+def audit_windows_architecture(executables, data_root, expected):
+    """Reject compatible-but-emulated binaries in installed-package acceptance."""
+    result = []
+    for executable in executables:
+        path = Path(executable).resolve()
+        assert path.is_relative_to(data_root.resolve()), "Native executable outside managed data"
+        actual = pe_architecture(path)
+        assert actual == expected, f"Expected native {expected} executable, found {actual}: {path.name}"
+        result.append({"binary": str(path.relative_to(data_root.resolve())), "architecture": actual})
+    return sorted(result, key=lambda row: row["binary"])
+
+
 def pe_imports(path):
     """Read regular and delay imports without a global dumpbin/LLVM dependency."""
     data = Path(path).read_bytes()
@@ -182,7 +238,7 @@ def pe_imports(path):
     return sorted(imports)
 
 
-def audit_windows_dependencies(executables, data_root, system_root):
+def audit_windows_dependencies(executables, data_root, system_root, expected_architecture=None):
     """Fail when engines borrow redistributables from the hosted image.
 
     PATH isolation does not isolate the Windows loader from System32. Therefore
@@ -200,6 +256,14 @@ def audit_windows_dependencies(executables, data_root, system_root):
         seen.add(binary)
         assert binary.is_relative_to(data_root.resolve()), "Native executable outside managed data"
         siblings = {path.name.lower(): path for path in binary.parent.iterdir() if path.is_file()}
+        architecture = pe_architecture(binary)
+        if expected_architecture:
+            allowed = {expected_architecture}
+            # ARM64X redistributable DLLs contain native ARM64 and x64-compatible
+            # views. They do not justify accepting an emulated executable.
+            if binary.suffix.lower() == ".dll" and expected_architecture == "arm64":
+                allowed.add("arm64x")
+            assert architecture in allowed, f"Wrong native dependency architecture: {binary.name}: {architecture}"
         imports = pe_imports(binary)
         for imported in imports:
             if imported in siblings:
@@ -210,7 +274,8 @@ def audit_windows_dependencies(executables, data_root, system_root):
                 continue
             elif not (system_root / "System32" / imported).is_file():
                 raise AssertionError(f"Native dependency is not app-local or an OS DLL: {imported}")
-        result.append({"binary": str(binary.relative_to(data_root.resolve())), "imports": imports})
+        result.append({"binary": str(binary.relative_to(data_root.resolve())),
+                       "architecture": architecture, "imports": imports})
     return sorted(result, key=lambda row: row["binary"])
 
 
@@ -219,6 +284,8 @@ def main():
     parser.add_argument("--output", type=Path, required=True, help="New directory outside the repository")
     parser.add_argument("--audio", choices=["skip", "full"], default="full")
     parser.add_argument("--audio-model", choices=["small", "turbo"], default="small")
+    parser.add_argument("--expected-architecture", choices=["x86_64", "arm64"],
+                        help="Require this native Windows host and every managed executable")
     args = parser.parse_args()
     output = args.output.expanduser().absolute()
     if output.exists() or output.is_symlink() or output.is_relative_to(ROOT):
@@ -282,14 +349,26 @@ def main():
         return json.loads(result.stdout)
 
     try:
+        expected_architecture = None
+        if windows:
+            expected_architecture = args.expected_architecture or windows_native_architecture()
+            report["nativeWindowsArchitecture"] = verify_windows_host(expected_architecture)
         inspection = run("check")
         assert inspection["downloadsStarted"] is False and not data.exists()
+        if windows:
+            assert inspection["architecture"] == expected_architecture
         doctor = run("doctor")
         assert doctor["capabilities"]["core"]["pythonReady"]
         assert doctor["capabilities"]["core"]["pythonManagedBySetup"]
         if windows:
             assert doctor["liveConnectionSupported"]
             assert doctor["python"].startswith("3.13.")
+            base_executables = list((data / "runtime").rglob("python.exe"))
+            base_executables += list((data / "runtime").rglob("uv.exe"))
+            assert len(base_executables) >= 3, "Missing base Python, link Python, or uv"
+            report["baseArchitectureAudit"] = audit_windows_architecture(
+                base_executables, data, expected_architecture,
+            )
         assert not (data / "models").exists(), "Base preparation downloaded optional models"
         before = run("setup")
         assert before["recommendSemantic"] and not before["audio"]["installed"]
@@ -300,6 +379,10 @@ def main():
         for field in ("modelPath", "runtimePath"):
             assert Path(semantic[field]).resolve().is_relative_to(data.resolve())
         assert run("setup")["semantic"]["currentFilesVerified"]
+        if windows:
+            report["semanticArchitectureAudit"] = audit_windows_architecture(
+                [semantic["runtimePath"]], data, expected_architecture,
+            )
 
         # These are freshly authored synthetic records, never phone/personal data.
         fixture = json.loads((ROOT / "tests/semantic-fixture.json").read_text(encoding="utf-8"))
@@ -355,12 +438,31 @@ def main():
             audio_result = run("setup", "--audio", "--model", args.audio_model)
             assert audio_result["installed"] and audio_result["diarizationReady"]
             audio_config = json.loads((data / "runtime/audio/config.json").read_text(encoding="utf-8"))
+            if windows:
+                assert audio_config["architecture"] == expected_architecture
+                report["audioArchitectureAudit"] = audit_windows_architecture(
+                    [audio_config[key] for key in ("python", "ffmpeg", "whisperCLI")],
+                    data, expected_architecture,
+                )
             for field in ("python", "ffmpeg", "whisperCLI", "model", "segmentationModel", "embeddingModel"):
                 assert Path(audio_config[field]).resolve().is_relative_to(data.resolve()), field
             sample = data / "runtime/audio" / assets["whisperSource"]["directory"] / "samples/jfk.wav"
             sample_hash = file_hash(sample)
+            # Exercise the M4A/AAC format used by phone recordings as well as
+            # the upstream WAV sample, without reading any personal audio.
+            aac_directory = output / "aac-fixture"
+            aac_directory.mkdir()
+            shutil.copyfile(sample, aac_directory / "source.wav")
+            subprocess.run([
+                audio_config["ffmpeg"], "-v", "error", "-nostdin", "-i", "source.wav",
+                "-ar", "48000", "-ac", "2", "-c:a", "aac", "-b:a", "96k", "sample.m4a",
+            ], cwd=aac_directory, env=environment, check=True, timeout=180)
+            aac = aac_directory / "sample.m4a"
+            assert aac.is_file() and aac.stat().st_size > 0
+            aac_hash = file_hash(aac)
             for diarize, destination in ((False, "transcript 无说话人"), (True, "transcript 说话人")):
-                arguments = ["transcribe", "--audio", str(sample), "--output", str(output / destination),
+                selected_audio = sample if diarize else aac
+                arguments = ["transcribe", "--audio", str(selected_audio), "--output", str(output / destination),
                              "--language", "en"]
                 if not diarize:
                     arguments.append("--no-diarize")
@@ -370,6 +472,8 @@ def main():
                 actual = json.loads((output / destination / "result.json").read_text(encoding="utf-8"))
                 assert actual["diarization"]["status"] == ("completed" if diarize else "not_requested")
             assert file_hash(sample) == sample_hash, "Transcription changed its source audio"
+            assert file_hash(aac) == aac_hash, "Transcription changed its AAC source audio"
+            report["aacInputVerified"] = True
             for asset in [assets["models"][args.audio_model], *assets["diarization"].values()]:
                 path = data / "models/audio" / asset["filename"]
                 assert path.stat().st_size == asset["size"] and file_hash(path) == asset["sha256"]
@@ -379,7 +483,7 @@ def main():
             if audio_config:
                 engines += [audio_config["ffmpeg"], audio_config["whisperCLI"]]
             report["nativeDependencyAudit"] = audit_windows_dependencies(
-                engines, data, Path(os.environ["SystemRoot"]),
+                engines, data, Path(os.environ["SystemRoot"]), expected_architecture,
             )
         assert not sentinel.exists()
         report.update({

@@ -20,7 +20,7 @@
 
 <p align="center"><a href="https://auday.ai/">Visit auday.ai</a></p>
 
-This repository provides **Auday’s desktop companion skill**. It brings the context saved in the app to your desktop AI assistant for searching, writing, and deeper audio analysis on your Mac or Windows PC. Phone data stays read-only, with sources attached to the information you use.
+This repository provides **Auday’s desktop companion skill**. It brings the context saved in the app to your desktop AI assistant for searching, writing, and deeper audio analysis on your Mac or Windows PC, including Windows 11 ARM64. Phone data stays read-only, with sources attached to the information you use.
 
 **Auday data travels directly between your iPhone and computer over an encrypted local protocol, without passing through any cloud relay server.**
 
@@ -34,7 +34,7 @@ Different hosts use different skill locations and import formats. Ask the agent 
 
 The agent uses its native skill installer, checks the new environment, and prepares the required tools. You do not need to install Python or a package manager yourself or run commands in a terminal. Windows setup needs no WSL, MSVC, or separate GPU. If the operating system needs a password, permission, or license acceptance, the agent explains that local step and continues afterward.
 
-On the first run, the agent recommends **local semantic search**: a 333.59 MB model and runtime archives of about 11.2 MB on Mac or 18.43 MB on Windows x64. Windows also prepares a private Microsoft runtime package of about 3.22 MB when needed. Base tools are downloaded separately when needed; the agent reports the selected downloads. Extracted files and indexes use additional space. You can install it now or leave it for later; the choice is saved. Keyword search remains available without it. Model use is subject to the [Gemma terms](https://ai.google.dev/gemma/terms).
+On the first run, the agent recommends **local semantic search**: a 333.59 MB model and runtime archives of about 11.2 MB on Mac, 18.43 MB on Windows x64, or 11.99 MB on Windows ARM64. Windows also prepares a private Microsoft runtime package when needed: about 3.22 MB for x64 or 5.05 MB for ARM64. Base tools are downloaded separately when needed; the agent reports the selected downloads. Extracted files and indexes use additional space. You can install it now or leave it for later; the choice is saved. Keyword search remains available without it. Model use is subject to the [Gemma terms](https://ai.google.dev/gemma/terms).
 
 **Transcription is prepared on demand.** When you request it, the agent selects one suitable model, downloads and verifies it, saves the configuration, and tests the pipeline. Anonymous speaker labels are included by default. Say “do not distinguish speakers” to skip the speaker models and dependencies.
 
@@ -64,17 +64,17 @@ Your synchronized library is a SQLite file on disk, retained after restarting th
 
 ## Requirements
 
-- **Windows:** Windows 10/11 x64 with Windows PowerShell 5.1. The managed setup uses Python 3.13.16 and CPU model runtimes; it requires no pre-installed Python, WSL, MSVC, or GPU.
+- **Windows:** Windows 10/11 x64 or Windows 11 ARM64, with Windows PowerShell 5.1. Setup detects the native OS architecture and prepares private `uv` 0.13.3, native Python 3.13.16, and matching CPU model runtimes. No pre-installed Python, WSL, MSVC, or GPU is required.
 - **Mac:** macOS 13 or later for the core client; macOS 13.3 or later for the pinned semantic runtime. Phone connection and the audio build need Xcode Command Line Tools with Swift 5.9 or later; the agent can start Apple's installer if they are missing.
 - An Auday iPhone build with **Connect to your workflow**, with both devices connected to the same Wi-Fi.
-- The agent prepares private `uv` and managed Python when needed. Windows ARM64 and Linux are outside the supported setup baseline.
+- Linux and Windows 10 ARM64 are outside the supported setup baseline. Optional local model engines have their own CPU requirements; setup verifies each selected capability.
 - Models are not bundled. The agent installs selected semantic or transcription assets during their setup flow, verifies their hashes, and checks that they run locally.
 
 Core connection and context retrieval do not require an AI API key, an Auday cloud account, or a cloud relay.
 
 For deeper recording analysis, the [audio workflow](references/audio.md) covers the integrated Mac and Windows pipeline. The [language strategy guide](references/audio-language-routing.md) helps the agent choose for the actual speech; the [Mac audio guide](references/mac-audio-models.md) covers additional Apple-specific engines and resource planning. The agent can adapt the tools to your recordings and reuse a setup that works well.
 
-The integrated transcription setup offers multilingual Whisper `small` Q5_1 (190.09 MB) or large-v3-`turbo` Q5_0 (574.04 MB), selected for your computer and task, plus about 30 MB of speaker model files by default. Runtime downloads and dependencies are additional. Windows uses the official prebuilt CPU runtime with FFmpeg; no separate GPU is needed. This transcription runtime requires CPU support for AVX2, FMA, and F16C. Basic connection, text sync, and readable export remain available without those audio requirements. The agent installs one route and reuses it. Other engines in the guides need their own compatible setup. Anonymous speaker labels do not identify real people.
+The integrated transcription setup offers multilingual Whisper `small` Q5_1 (190.09 MB) or large-v3-`turbo` Q5_0 (574.04 MB), selected for your computer and task, plus about 30 MB of speaker model files by default. Runtime downloads and dependencies are additional. Windows uses native prebuilt CPU runtimes with FFmpeg; no separate GPU is needed. The x64 transcription runtime requires AVX2, FMA, and F16C; the ARM64 route uses its own native engine. If a selected optional model runtime is incompatible with the CPU, basic connection, text sync, keyword search, and readable export remain available. The agent installs one route and reuses it. Other engines in the guides need their own compatible setup. Anonymous speaker labels do not identify real people.
 
 ## Data and privacy
 
@@ -91,7 +91,7 @@ Local transport does not mean a cloud-based assistant performs inference locally
 See the [first-run validation record](docs/first-run-validation.md) for recorded
 installation coverage and its limits. A CI pass or synthetic peer does not establish
 physical iPhone connectivity. The following native test commands are for macOS;
-Windows tests use the managed Python 3.13 runtime and Windows CI.
+Windows tests use the managed Python 3.13 runtime and separate native x64 and ARM64 Windows CI jobs.
 
 ```sh
 sh tools/git/install-hooks.sh

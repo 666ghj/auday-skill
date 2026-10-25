@@ -12,7 +12,7 @@ The iPhone and computer exchange Auday data directly over an encrypted local pro
 
 ## Start here
 
-The bundled client runs on macOS or Windows 10/11 x64 and requires a compatible iPhone app with **Connect to your workflow / 接入你的工作流**. Installing this skill does not add that feature to the phone. If the page is missing, explain the companion requirement; do not claim access to recordings or fall back to extracting the phone's private container.
+The bundled client runs on macOS, Windows 10/11 x64, or Windows 11 ARM64 and requires a compatible iPhone app with **Connect to your workflow / 接入你的工作流**. Installing this skill does not add that feature to the phone. If the page is missing, explain the companion requirement; do not claim access to recordings or fall back to extracting the phone's private container.
 
 For a new installation, read [First-run setup](references/first-run.md). Start from an empty user environment: do not assume Python, package managers, developer tools, models, pairing, or a synchronized library already exist. Resolve scripts relative to this `SKILL.md`, using quoted absolute paths. Choose the host's entrypoint:
 
@@ -28,7 +28,7 @@ On Windows:
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "<skill-root>\scripts\bootstrap.ps1" check
 ```
 
-`check` needs no Python and downloads nothing. Use the same entrypoint with `doctor`, then `setup`. The bootstrap prepares private `uv` and managed Python. Windows uses Python 3.13.16, CPU model runtimes, and Windows Credential Manager; it needs no WSL, MSVC, or separate GPU. Its integrated Whisper.cpp audio runtime requires AVX2, FMA, and F16C; a missing audio CPU feature must not block connection or text workflows. The PowerShell policy flag applies only to that process. macOS uses Python 3.12.15 and Keychain; phone connection and the audio build also need Xcode Command Line Tools with Swift 5.9 or later. Handle missing Apple tools through the system installer only on macOS.
+`check` needs no Python and downloads nothing. Use the same entrypoint with `doctor`, then `setup`. The bootstrap prepares private `uv` and managed Python. On Windows, it detects the native OS architecture even when the agent runs under emulation, then selects native Python 3.13.16 and model runtimes. Pairing uses Windows Credential Manager; setup needs no WSL, MSVC, or separate GPU. Optional model runtimes have additional CPU requirements described in the setup and audio guides; a failed optional capability must not block connection or text workflows. The PowerShell policy flag applies only to that process. macOS uses Python 3.12.15 and Keychain; phone connection and the audio build also need Xcode Command Line Tools with Swift 5.9 or later. Handle missing Apple tools through the system installer only on macOS.
 
 Recommend local semantic search once during first-run setup, describing its download and local processing. Let the user install it now or defer it, and record the choice. An explicit request to configure semantic search already authorizes that setup. Prepare transcription only when audio analysis is requested, choosing one appropriate model and including anonymous diarization unless the user opts out. Complete downloads, hash checks, configuration, and synthetic verification yourself; do not hand the user a terminal checklist. Report which capabilities are ready and what still needs the phone or a user-only system step.
 

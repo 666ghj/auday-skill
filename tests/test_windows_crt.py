@@ -1,5 +1,6 @@
 """App-local Microsoft runtime preparation with synthetic archives and no downloads."""
 
+import copy
 import hashlib
 from pathlib import Path
 import sys
@@ -39,6 +40,20 @@ class WindowsCRTTests(unittest.TestCase):
         self.downloaded = self.download.start()
         self.addCleanup(self.download.stop)
 
+    def arm64_fixture(self):
+        archive_path = self.root / "arm64.vsix"
+        asset = copy.deepcopy(self.asset)
+        asset.update(url="https://example.invalid/arm64-runtime.vsix", sha256="b" * 64, files=[])
+        with zipfile.ZipFile(archive_path, "w") as archive:
+            for name in windows_crt.ARM64_CORE_FILES:
+                data = ("synthetic-arm64-" + name).encode()
+                member = "Contents/arm64/release/" + name
+                archive.writestr(member, data)
+                asset["files"].append({"filename": name, "member": member, "size": len(data),
+                                       "sha256": hashlib.sha256(data).hexdigest()})
+        asset["size"] = archive_path.stat().st_size
+        return asset, archive_path
+
     def test_installs_only_required_release_dlls_and_reuses_verified_files(self):
         paths = windows_crt.ensure_windows_crt(self.root, self.destination)
         self.assertEqual({path.name for path in paths}, set(windows_crt.CORE_FILES))
@@ -77,6 +92,47 @@ class WindowsCRTTests(unittest.TestCase):
             windows_crt.ensure_windows_crt(self.root, outside)
         self.downloaded.assert_not_called()
         self.assertFalse(outside.exists())
+
+    def test_arm64_selects_its_own_release_files_and_archive(self):
+        asset, archive = self.arm64_fixture()
+        self.downloaded.return_value = archive
+        with patch.object(windows_crt, "ARM64_CRT_ASSET", asset):
+            paths = windows_crt.ensure_windows_crt(self.root, self.destination, architecture="arm64")
+            self.assertEqual(windows_crt.crt_asset("arm64"), asset)
+            self.assertEqual(windows_crt.ensure_windows_crt(
+                self.root, self.destination, architecture="arm64"), paths)
+        self.assertEqual({path.name for path in paths}, set(windows_crt.ARM64_CORE_FILES))
+        self.assertEqual({path.name for path in self.destination.iterdir()}, set(windows_crt.ARM64_CORE_FILES))
+        for path in paths:
+            self.assertEqual(path.read_bytes(), ("synthetic-arm64-" + path.name).encode())
+        self.downloaded.assert_called_once()
+        self.assertEqual(self.downloaded.call_args.args[0], asset["url"])
+        self.assertEqual(self.downloaded.call_args.args[2], asset["sha256"])
+
+    def test_arm64_refuses_to_reuse_x64_dlls(self):
+        windows_crt.ensure_windows_crt(self.root, self.destination)
+        before = {path.name: path.read_bytes() for path in self.destination.iterdir()}
+        self.downloaded.reset_mock()
+        asset, _ = self.arm64_fixture()
+        with patch.object(windows_crt, "ARM64_CRT_ASSET", asset):
+            with self.assertRaisesRegex(ValueError, "existing_windows_runtime_library_mismatch"):
+                windows_crt.ensure_windows_crt(self.root, self.destination, architecture="arm64")
+        self.assertEqual({path.name: path.read_bytes() for path in self.destination.iterdir()}, before)
+        self.downloaded.assert_not_called()
+
+    def test_arm64_does_not_fall_back_to_x64_openmp(self):
+        asset, _ = self.arm64_fixture()
+        with patch.object(windows_crt, "ARM64_CRT_ASSET", asset):
+            with self.assertRaisesRegex(ValueError, "windows_runtime_manifest_incomplete"):
+                windows_crt.ensure_windows_crt(self.root, self.destination, architecture="arm64", openmp=True)
+        self.downloaded.assert_not_called()
+        self.assertFalse(self.destination.exists())
+
+    def test_unknown_architecture_fails_without_download_or_setup(self):
+        with self.assertRaisesRegex(ValueError, "unsupported_windows_runtime_architecture"):
+            windows_crt.ensure_windows_crt(self.root, self.destination, architecture="aarch32")
+        self.downloaded.assert_not_called()
+        self.assertFalse(self.destination.exists())
 
 
 if __name__ == "__main__":

@@ -264,12 +264,30 @@ function Expand-AudaySafeZip([string] $Archive, [string] $Destination) {
     } finally { if ($zip) { $zip.Dispose() } }
 }
 
+function Get-AudayArchitecture {
+    # PROCESSOR_* variables can describe an emulated agent shell. Windows' CPU
+    # inventory reports the native architecture without compiling local code.
+    try {
+        $modulePath = [IO.Path]::Combine($PSHOME, 'Modules', 'CimCmdlets', 'CimCmdlets.psd1')
+        Import-Module -Name $modulePath -ErrorAction Stop
+        $architectures = @(Get-CimInstance -ClassName Win32_Processor -Property Architecture -OperationTimeoutSec 10 -ErrorAction Stop |
+            ForEach-Object { [int] $_.Architecture } | Select-Object -Unique)
+    } catch { throw 'windows_native_architecture_unavailable' }
+    if ($architectures.Count -ne 1) { throw 'windows_native_architecture_unavailable' }
+    switch ($architectures[0]) {
+        9 { return 'x86_64' }
+        12 { return 'arm64' }
+        default { throw 'windows_x64_or_arm64_required' }
+    }
+}
+
 function Start-AudayBootstrap([string[]] $CommandArguments) {
     if ([Environment]::OSVersion.Platform -ne [PlatformID]::Win32NT) { throw 'windows_required' }
     if ([Environment]::OSVersion.Version.Major -lt 10) { throw 'requires_windows_10_or_later' }
-    $architecture = $env:PROCESSOR_ARCHITECTURE
-    if ($env:PROCESSOR_ARCHITEW6432) { $architecture = $env:PROCESSOR_ARCHITEW6432 }
-    if ($architecture -ne 'AMD64') { throw 'windows_x64_required' }
+    $architecture = Get-AudayArchitecture
+    if ($architecture -eq 'arm64' -and [Environment]::OSVersion.Version.Build -lt 22000) {
+        throw 'windows_arm64_requires_windows_11_or_later'
+    }
     $localData = $env:LOCALAPPDATA
     if (-not $localData) { $localData = [Environment]::GetFolderPath('LocalApplicationData') }
     $dataRoot = $null
@@ -292,7 +310,7 @@ function Start-AudayBootstrap([string[]] $CommandArguments) {
         $memory = $null; $free = $null
         try { $memory = [long] (Get-CimInstance Win32_ComputerSystem -OperationTimeoutSec 10).TotalPhysicalMemory } catch { }
         try { $free = (New-Object IO.DriveInfo([IO.Path]::GetPathRoot($dataRoot))).AvailableFreeSpace } catch { }
-        [Console]::Out.WriteLine((@{ ok = $true; windows = [Environment]::OSVersion.Version.ToString(); architecture = 'x86_64';
+        [Console]::Out.WriteLine((@{ ok = $true; windows = [Environment]::OSVersion.Version.ToString(); architecture = $architecture;
             memoryBytes = $memory; availableDiskBytes = $free; downloadsStarted = $false;
             nextStep = 'run bootstrap doctor to prepare the private base runtime' } | ConvertTo-Json -Compress))
         return 0
@@ -302,7 +320,7 @@ function Start-AudayBootstrap([string[]] $CommandArguments) {
     Assert-AudayOrdinaryPath $dataRoot
     [void] [IO.Directory]::CreateDirectory($dataRoot)
     $assets = @(Import-Csv -LiteralPath (Join-Path $PSScriptRoot 'runtime-assets.tsv') -Delimiter "`t" | Where-Object {
-        $_.component -eq 'uv' -and $_.architecture -eq 'x86_64' -and $_.platform -eq 'windows'
+        $_.component -eq 'uv' -and $_.architecture -eq $architecture -and $_.platform -eq 'windows'
     })
     if ($assets.Count -ne 1) { throw 'unsupported_runtime_asset' }
     $asset = $assets[0]
@@ -330,12 +348,16 @@ function Start-AudayBootstrap([string[]] $CommandArguments) {
         } finally { if ([IO.Directory]::Exists($stage)) { [IO.Directory]::Delete($stage, $true) } }
     }
     $environment = Get-AudayPrivateEnvironment $dataRoot
-    $found = Invoke-AudayProcess $uv @('--no-config', 'python', 'find', '--managed-python', 'cpython@3.13.16') $environment -Capture -TimeoutSeconds 60
+    $pythonArchitecture = 'x86_64'
+    $pythonPlatform = 'win-amd64'
+    if ($architecture -eq 'arm64') { $pythonArchitecture = 'aarch64'; $pythonPlatform = 'win-arm64' }
+    $pythonRequest = 'cpython-3.13.16-windows-' + $pythonArchitecture + '-none'
+    $found = Invoke-AudayProcess $uv @('--no-config', 'python', 'find', '--managed-python', $pythonRequest) $environment -Capture -TimeoutSeconds 60
     if ($found.ExitCode -ne 0) {
         Write-AudayProgress 'Preparing private Python runtime'
-        $installed = Invoke-AudayProcess $uv @('--no-config', 'python', 'install', 'cpython@3.13.16', '--no-bin') $environment
+        $installed = Invoke-AudayProcess $uv @('--no-config', 'python', 'install', $pythonRequest, '--no-bin') $environment
         if ($installed.ExitCode -ne 0) { return $installed.ExitCode }
-        $found = Invoke-AudayProcess $uv @('--no-config', 'python', 'find', '--managed-python', 'cpython@3.13.16') $environment -Capture -TimeoutSeconds 60
+        $found = Invoke-AudayProcess $uv @('--no-config', 'python', 'find', '--managed-python', $pythonRequest) $environment -Capture -TimeoutSeconds 60
         if ($found.ExitCode -ne 0) { return $found.ExitCode }
     }
     $python = $found.Output.Trim()
@@ -344,7 +366,7 @@ function Start-AudayBootstrap([string[]] $CommandArguments) {
         throw 'python_runtime_outside_private_setup'
     }
     Assert-AudayOrdinaryPath $python
-    $probe = "import ssl,sqlite3,sys; assert sys.version_info[:3] == (3,13,16); assert ssl.HAS_PSK; assert hasattr(ssl.SSLContext, 'set_psk_client_callback')"
+    $probe = "import ssl,sqlite3,sys,sysconfig; assert sys.version_info[:3] == (3,13,16); assert ssl.HAS_PSK; assert hasattr(ssl.SSLContext, 'set_psk_client_callback'); assert sysconfig.get_platform().lower() == '$pythonPlatform', 'native_python_architecture_required'"
     $checked = Invoke-AudayProcess $python @('-I', '-c', $probe) $environment -TimeoutSeconds 30
     if ($checked.ExitCode -ne 0) { return $checked.ExitCode }
     $cliArguments = @((Join-Path $PSScriptRoot 'bootstrap_windows.py'), '--home', $dataRoot) + $forward.ToArray()

@@ -2,7 +2,7 @@
 
 Reviewed 2026-10-20. Use this guide when selecting an engine or planning deeper analysis. Recommendations are starting points for a representative audio check, not measured accuracy rankings on the user's recordings.
 
-This reference covers Mac-specific engines and hardware choices. Windows 10/11 x64 uses the integrated CPU workflow in [Local audio analysis](audio.md), with official prebuilt Whisper.cpp, FFmpeg, and optional default sherpa-onnx diarization. It does not need these Apple runtimes or a developer-tool installation.
+This reference covers Mac-specific engines and hardware choices. Windows 10/11 x64 and Windows 11 ARM64 use the integrated native CPU workflow in [Local audio analysis](audio.md), with prebuilt Whisper.cpp, FFmpeg, and optional default sherpa-onnx diarization. They do not need these Apple runtimes or a developer-tool installation.
 
 ## Choose a route
 
