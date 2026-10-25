@@ -120,39 +120,45 @@ every Windows release, ARM64 machine, or CPU has been tested. The optional Windo
 Whisper runtime requires AVX2, FMA, and F16C. Windows `turbo` was not exercised in
 this acceptance run; the recorded Windows inference preset is `small`.
 
-## Skill 0.7.0: native Windows ARM64 preparation
+## Skill 0.7.0: native Windows ARM64 installation and inference
 
-Local validation completed on 2026-10-25. This implementation targets Windows 11
-ARM64 while preserving Windows 10/11 x64 and macOS. **Native Windows execution
-acceptance is pending; the checks below are not Windows ARM64 runtime proof.**
+Validated on 2026-10-25 at commit `e81c44adcf2672ac27f20c7629845ecb269e4fd4`.
+The [native Windows clean acceptance run](https://github.com/666ghj/auday-skill/actions/runs/40191571138)
+passed on both `windows-11-arm` (OS `10.0.26200`) and `windows-2025` x64
+(OS `10.0.26100`). The ARM64 host, runner Python, managed Python, uv, model
+executables, and app-local DLLs were checked for native architecture; x64
+emulation was not accepted as ARM64 proof.
 
-- On macOS with Python 3.13.16 and portable PowerShell 7.6.8, the integrated suite
-  passed 255 tests with 6 platform/optional skips. It exercised architecture
-  selection, PowerShell quoting and extraction, synthetic encrypted transport,
-  source preservation, installed-package contracts, and local retrieval logic.
-  After the follow-up speaker-validation migration fix, all 34 audio setup tests
-  passed, including preservation and revalidation across architectures.
-- The exact uv 0.13.3/Python 3.13.16 combination installed the locked ARM64
-  discovery dependency recipe using zeroconf's pure-Python build. No Cython or
-  native compiler was used. Both private-uv and explicit-pip test routes passed
-  on macOS; native Windows installation remains a separate check.
-- Downloaded Windows ARM64 uv, llama.cpp, Microsoft CRT, Whisper, FFmpeg, and
-  LLVM OpenMP assets were checked against their pinned hashes, byte counts,
-  archive layouts, and PE architecture. Whisper's required OpenMP symbols are
-  present in the separately sourced LLVM runtime. These are static checks, not
-  execution of Windows binaries.
-- The frozen audio dependency set resolved Windows ARM64 wheels without
-  imageio-ffmpeg or x64 wheels. Existing x64 dependencies remain pinned.
-- Skill metadata, relative references, public-source checks, and whitespace
-  validation passed. Independent source review found no remaining blocker.
+Each architecture completed an installation from an installed skill package,
+with empty private caches, Unicode installation/data paths, and failing global
+tool sentinels. The ARM64 run took 203.6 seconds and the x64 run 104.2 seconds
+on these hosted machines; these are observations, not user-device performance
+estimates. The completed checks verified:
 
-The Windows regression and clean-install workflows now have separate native
-`windows-2025` x64 and `windows-11-arm` jobs. Clean acceptance checks the OS,
-interpreter, executables, and DLL machine types as well as semantic retrieval,
-public-sample transcription, default diarization, and speaker opt-out. Their
-results must be recorded before describing Windows ARM64 execution as verified.
+1. The system-only check downloaded nothing. Base setup installed native private
+   uv and Python 3.13.16 without optional models. ARM64 installed zeroconf through
+   its locked pure-Python build, with no native compiler or global Python.
+2. Semantic setup passed three checks; eight English, Chinese, and mixed-language
+   queries passed. An unchanged index was reused and readable export left the
+   source database unchanged.
+3. Whisper `small` transcribed public sample audio with speaker opt-out and with
+   default anonymous diarization. The opt-out environment contained no speaker
+   dependencies or weights. A 48 kHz stereo AAC/M4A derivative also passed the
+   transcription path, and both WAV and AAC source files remained unchanged.
+4. Model hashes, native executable architecture, and recursive DLL import checks
+   passed. No forbidden global tool was invoked. FFmpeg and Whisper startup
+   checks run before model downloads.
 
-Physical Windows-to-iPhone LAN pairing, firewall prompts, phone background
-behavior, and personal-audio accuracy remain outside synthetic acceptance.
-The pinned ARM64 semantic engine targets ARMv8.7-A; a successful hosted run
-cannot establish compatibility with every older ARM64 processor.
+The [cross-platform regression run](https://github.com/666ghj/auday-skill/actions/runs/40191571170)
+passed 261 tests on each Windows architecture (7 platform/optional skips),
+including native Credential Manager, local discovery, and synthetic encrypted
+transport. macOS passed 261 Python tests (19 skips), both native test packages,
+and a Python 3.13 transport pass with 26 tests (1 Windows-only skip).
+Public-source/history checks and independent source review also passed.
+
+This evidence covers native Windows 11 ARM64 and Windows x64 hosted execution,
+not a factory-reset PC or physical Windows-to-iPhone LAN acceptance. Firewall
+prompts, phone background behavior, and personal-audio accuracy remain separate
+checks. Windows `turbo` was not exercised; the recorded inference preset is
+`small`. The pinned ARM64 semantic engine targets ARMv8.7-A, so a successful
+hosted run does not establish support for every older ARM64 processor.
