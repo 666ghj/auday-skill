@@ -19,14 +19,22 @@ requested. The agent performs the preparation:
 
 Setup prepares the private base environment when needed, downloads and verifies
 the pinned model/runtime, saves configuration, and runs a synthetic verification.
-The model download is 333.59 MB. Runtime archives are about 11.2 MB on Mac or
-18.43 MB for the Windows x64 CPU runtime, plus about 3.22 MB for the private Microsoft
-runtime package when needed. These DLLs are installed beside the engine, not
+The model download is 333.59 MB. Runtime archives are about 11.2 MB on Mac,
+18.43 MB for Windows x64, or 11.99 MB for Windows ARM64. The private Microsoft
+runtime package, when needed, is about 3.22 MB for x64 or 5.05 MB for ARM64.
+These DLLs are installed beside the engine, not
 through a system-wide installer. The private base environment is additional,
 with more space required after extraction. The runtime requires macOS 13.3 or later,
-or Windows 10/11 x64. Explain the
+Windows 10/11 x64, or Windows 11 ARM64. Explain the
 downloads and [Gemma terms](https://ai.google.dev/gemma/terms); an explicit request
 to prepare semantic search does not need another installation confirmation.
+
+The pinned Windows ARM64 engine is compiled for
+[ARMv8.7-A](https://github.com/ggml-org/llama.cpp/blob/b10865/cmake/arm64-windows-llvm.cmake).
+An older ARM processor may support the base client but fail this engine's native
+runtime check. Preserve the existing index and available keyword search/export,
+and report the optional capability as unavailable; do not claim readiness from
+the download alone or substitute an x64 binary.
 
 The semantic query module itself uses Python's standard library, the configured
 local model, and local llama.cpp. It does not download during indexing/search or
