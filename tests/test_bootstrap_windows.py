@@ -25,6 +25,11 @@ POWERSHELL = (str(Path(os.environ.get("SystemRoot", r"C:\Windows")) /
 
 
 class WindowsLauncherTests(unittest.TestCase):
+    def setUp(self):
+        native = patch.object(runtime, "windows_native_architecture", return_value="x86_64")
+        native.start()
+        self.addCleanup(native.stop)
+
     def test_launcher_uses_connection_interpreter_and_preserves_arguments_and_exit(self):
         with tempfile.TemporaryDirectory(prefix="auday-launcher-") as folder:
             root = Path(folder) / "space and Unicode \u8bb0\u5fc6"
@@ -56,7 +61,7 @@ class WindowsLauncherTests(unittest.TestCase):
                 if "venv" in command:
                     python.parent.mkdir(parents=True)
                     python.write_bytes(b"synthetic Python")
-                return SimpleNamespace(returncode=0, stdout=json.dumps({"ok": True, "tlsPSK": True}))
+                return SimpleNamespace(returncode=0, stdout=json.dumps({"ok": True, "tlsPSK": True, "interpreterPlatform": "win-amd64"}))
 
             with patch.object(runtime.sys, "platform", "win32"), \
                     patch.object(runtime, "HERE", scripts), \
@@ -75,6 +80,53 @@ class WindowsLauncherTests(unittest.TestCase):
                 self.assertTrue(kwargs["check"])
                 self.assertEqual(kwargs["env"]["UV_PYTHON"], "3.13.16")
                 self.assertNotIn("--system", command)
+
+    def test_arm64_connection_setup_uses_pure_python_dependencies_and_native_probe(self):
+        with tempfile.TemporaryDirectory(prefix="auday-arm64-link-") as folder:
+            root = Path(folder)
+            scripts = root / "synthetic-scripts"
+            scripts.mkdir()
+            (scripts / "requirements-windows-link.txt").write_text("synthetic lock\n")
+            build_lock = scripts / "requirements-windows-arm64-build.txt"
+            build_lock.write_text("synthetic build lock\n")
+            utilities = SimpleNamespace(
+                secure_directory=lambda path: path.mkdir(parents=True, exist_ok=True),
+                exclusive_file_lock=lambda path: nullcontext(),
+            )
+            python = runtime.windows_link_python(root)
+
+            def run(command, **kwargs):
+                if "venv" in command:
+                    python.parent.mkdir(parents=True)
+                    python.write_bytes(b"synthetic ARM64 Python")
+                return SimpleNamespace(returncode=0, stdout=json.dumps({"ok": True, "tlsPSK": True, "interpreterPlatform": "win-arm64"}))
+
+            with patch.object(runtime.sys, "platform", "win32"), \
+                    patch.object(runtime, "windows_native_architecture", return_value="arm64"), \
+                    patch.object(runtime, "HERE", scripts), \
+                    patch.dict(sys.modules, {"platform_utils": utilities}), \
+                    patch.object(runtime.subprocess, "run", side_effect=run) as process, \
+                    patch("windows_link_dependencies.install_arm64_link_dependencies") as install, \
+                    patch.object(runtime, "report"):
+                self.assertEqual(runtime.ensure_windows_link(root, root / "uv.exe", root / "base-python.exe"), python)
+                self.assertEqual(runtime.ensure_windows_link(root, root / "uv.exe", root / "base-python.exe"), python)
+                install.assert_called_once()
+                self.assertEqual(install.call_args.args[0], python)
+                self.assertEqual(install.call_args.kwargs["uv"], root / "uv.exe")
+                self.assertEqual(process.call_count, 3)  # venv, fresh probe, cached probe
+                marker = json.loads((root / "runtime/windows-link/.auday-link-runtime.json").read_text())
+                self.assertEqual(marker["architecture"], "arm64")
+                self.assertEqual(marker["buildRequirementsSHA256"], runtime.file_hash(build_lock))
+                build_lock.write_text("changed build dependency\n")
+                with self.assertRaisesRegex(ValueError, "existing_windows_link_runtime_incomplete"):
+                    runtime.ensure_windows_link(root)
+                self.assertTrue(python.is_file())
+
+    def test_arm64_probe_rejects_emulated_x64_python(self):
+        result = SimpleNamespace(stdout=json.dumps({"ok": True, "tlsPSK": True, "interpreterPlatform": "win-amd64"}))
+        with patch.object(runtime.subprocess, "run", return_value=result):
+            with self.assertRaisesRegex(ValueError, "runtime_architecture_mismatch"):
+                runtime._probe_windows_link(Path("python.exe"), {}, architecture="arm64")
 
     def test_connection_setup_preserves_existing_incomplete_directory(self):
         with tempfile.TemporaryDirectory(prefix="auday-link-preserve-") as folder:
@@ -117,6 +169,30 @@ class PowerShellBootstrapTests(unittest.TestCase):
 
     def literal(self, value):
         return "'" + str(value).replace("'", "''") + "'"
+
+    def test_native_architecture_ignores_emulated_shell_environment(self):
+        result = self.powershell(
+            "function Import-Module { }\n"
+            "function Get-CimInstance { [pscustomobject] @{ Architecture = 12 } }\n"
+            "$env:PROCESSOR_ARCHITECTURE = 'AMD64'\n"
+            "$env:PROCESSOR_ARCHITEW6432 = 'AMD64'\n"
+            "Get-AudayArchitecture"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "arm64")
+
+    def test_native_architecture_rejects_missing_and_unsupported_cpu_data(self):
+        for output in ("$null", "[pscustomobject] @{ Architecture = 0 }",
+                       "[pscustomobject] @{ Architecture = 9 }; [pscustomobject] @{ Architecture = 12 }"):
+            with self.subTest(output=output):
+                result = self.powershell(
+                    "function Import-Module { }\n"
+                    "function Get-CimInstance { " + output + " }\n"
+                    "$env:PROCESSOR_ARCHITECTURE = 'AMD64'\n"
+                    "Get-AudayArchitecture"
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertRegex(result.stderr, "windows_(native_architecture_unavailable|x64_or_arm64_required)")
 
     def test_private_environment_does_not_mutate_current_process(self):
         environment = {**os.environ, "UV_PYTHON": "poison-python", "PIP_INDEX_URL": "https://invalid.example",
@@ -201,7 +277,7 @@ class PowerShellBootstrapTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         payload = json.loads(result.stdout)
         self.assertEqual(Path(payload["cached"]), target)
-        self.assertEqual(payload["windowsAssets"], 1)
+        self.assertEqual(payload["windowsAssets"], 2)
         self.assertEqual(payload["autoLoading"], "None")
 
     def test_cached_download_with_matching_size_still_requires_matching_hash(self):

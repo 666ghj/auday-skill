@@ -372,8 +372,11 @@ class RuntimeSetupTests(unittest.TestCase):
             self.assertEqual(asset["archive_root"], ".")
             self.assertTrue(asset["executable"].endswith(".exe"))
             self.assertNotEqual(asset["install_dir"], mac["install_dir"])
-        with self.assertRaisesRegex(ValueError, "unsupported_runtime_asset"):
-            runtime.runtime_asset("uv", "arm64", "windows")
+            arm = runtime.runtime_asset(component, "arm64", "windows")
+            self.assertNotEqual(arm["url"], asset["url"])
+            self.assertNotEqual(arm["install_dir"], asset["install_dir"])
+            self.assertEqual(arm["archive_format"], "zip")
+            self.assertEqual(arm["archive_root"], ".")
 
     def test_windows_runtime_publishes_zip_with_no_directory_replacement(self):
         asset = runtime.runtime_asset("uv", "x86_64", "windows")
@@ -389,10 +392,10 @@ class RuntimeSetupTests(unittest.TestCase):
             self.assertEqual((executable.parent / "runtime.dll").read_bytes(), b"library")
             self.assertEqual(runtime.install_runtime(self.root, "uv"), executable)
 
-    def test_windows_requires_x64_and_python_313_but_no_apple_compiler(self):
+    def test_windows_requires_supported_architecture_and_python_313_but_no_apple_compiler(self):
         with patch.object(runtime.sys, "platform", "win32"), \
                 patch.object(runtime.sys, "getwindowsversion", create=True, return_value=SimpleNamespace(major=10)), \
-                patch.object(runtime.platform, "machine", return_value="AMD64"), \
+                patch.object(runtime, "windows_native_architecture", return_value="x86_64"), \
                 patch.object(runtime.subprocess, "run") as run:
             self.assertEqual(runtime.require_supported_system("13.3"), "windows")
             self.assertEqual(runtime.managed_python_version(), "3.13.16")
@@ -403,10 +406,34 @@ class RuntimeSetupTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "requires_windows_10"):
                 runtime.require_supported_system()
         with patch.object(runtime.sys, "platform", "win32"), \
-                patch.object(runtime.sys, "getwindowsversion", create=True, return_value=SimpleNamespace(major=10)), \
-                patch.object(runtime.platform, "machine", return_value="ARM64"):
-            with self.assertRaisesRegex(ValueError, "windows_x64_required"):
+                patch.object(runtime.sys, "getwindowsversion", create=True, return_value=SimpleNamespace(major=10, build=19045)), \
+                patch.object(runtime, "windows_native_architecture", return_value="arm64"):
+            with self.assertRaisesRegex(ValueError, "arm64_requires_windows_11"):
                 runtime.require_supported_system()
+        with patch.object(runtime.sys, "platform", "win32"), \
+                patch.object(runtime.sys, "getwindowsversion", create=True, return_value=SimpleNamespace(major=10, build=22000)), \
+                patch.object(runtime, "windows_native_architecture", return_value="arm64"):
+            self.assertEqual(runtime.require_supported_system(), "windows")
+            self.assertEqual(runtime.managed_python_request(), "cpython-3.13.16-windows-aarch64-none")
+
+    def test_windows_python_request_and_probe_pin_native_architecture(self):
+        interpreter = self.root / "runtime/python/native/python.exe"
+        interpreter.parent.mkdir(parents=True)
+        interpreter.write_bytes(b"synthetic Python")
+        for architecture, uv_name, python_platform in (("x86_64", "x86_64", "win-amd64"), ("arm64", "aarch64", "win-arm64")):
+            with self.subTest(architecture=architecture), \
+                    patch.object(runtime.sys, "platform", "win32"), \
+                    patch.object(runtime, "windows_native_architecture", return_value=architecture), \
+                    patch.object(runtime.subprocess, "run", side_effect=[
+                        subprocess.CompletedProcess([], 0),
+                        subprocess.CompletedProcess([], 0, stdout=str(interpreter)),
+                        subprocess.CompletedProcess([], 0),
+                    ]) as run:
+                self.assertEqual(runtime.ensure_python(self.root, uv_path=self.root / "uv.exe"), interpreter.resolve())
+                requested = "cpython-3.13.16-windows-" + uv_name + "-none"
+                self.assertIn(requested, run.call_args_list[0].args[0])
+                self.assertIn(requested, run.call_args_list[1].args[0])
+                self.assertIn(python_platform, run.call_args_list[2].args[0][-1])
 
     @unittest.skipUnless(sys.platform == "darwin", "bootstrap is a macOS system-shell entrypoint")
     def test_bootstrap_check_needs_no_runtime_and_creates_no_private_files(self):

@@ -119,3 +119,40 @@ target desktop baseline is Windows 10/11 x64; this hosted run does not claim tha
 every Windows release, ARM64 machine, or CPU has been tested. The optional Windows
 Whisper runtime requires AVX2, FMA, and F16C. Windows `turbo` was not exercised in
 this acceptance run; the recorded Windows inference preset is `small`.
+
+## Skill 0.7.0: native Windows ARM64 preparation
+
+Local validation completed on 2026-10-25. This implementation targets Windows 11
+ARM64 while preserving Windows 10/11 x64 and macOS. **Native Windows execution
+acceptance is pending; the checks below are not Windows ARM64 runtime proof.**
+
+- On macOS with Python 3.13.16 and portable PowerShell 7.6.8, the integrated suite
+  passed 255 tests with 6 platform/optional skips. It exercised architecture
+  selection, PowerShell quoting and extraction, synthetic encrypted transport,
+  source preservation, installed-package contracts, and local retrieval logic.
+  After the follow-up speaker-validation migration fix, all 34 audio setup tests
+  passed, including preservation and revalidation across architectures.
+- The exact uv 0.13.3/Python 3.13.16 combination installed the locked ARM64
+  discovery dependency recipe using zeroconf's pure-Python build. No Cython or
+  native compiler was used. Both private-uv and explicit-pip test routes passed
+  on macOS; native Windows installation remains a separate check.
+- Downloaded Windows ARM64 uv, llama.cpp, Microsoft CRT, Whisper, FFmpeg, and
+  LLVM OpenMP assets were checked against their pinned hashes, byte counts,
+  archive layouts, and PE architecture. Whisper's required OpenMP symbols are
+  present in the separately sourced LLVM runtime. These are static checks, not
+  execution of Windows binaries.
+- The frozen audio dependency set resolved Windows ARM64 wheels without
+  imageio-ffmpeg or x64 wheels. Existing x64 dependencies remain pinned.
+- Skill metadata, relative references, public-source checks, and whitespace
+  validation passed. Independent source review found no remaining blocker.
+
+The Windows regression and clean-install workflows now have separate native
+`windows-2025` x64 and `windows-11-arm` jobs. Clean acceptance checks the OS,
+interpreter, executables, and DLL machine types as well as semantic retrieval,
+public-sample transcription, default diarization, and speaker opt-out. Their
+results must be recorded before describing Windows ARM64 execution as verified.
+
+Physical Windows-to-iPhone LAN pairing, firewall prompts, phone background
+behavior, and personal-audio accuracy remain outside synthetic acceptance.
+The pinned ARM64 semantic engine targets ARMv8.7-A; a successful hosted run
+cannot establish compatibility with every older ARM64 processor.

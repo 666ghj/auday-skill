@@ -21,6 +21,7 @@ import urllib.request
 import zipfile
 
 from progress import report
+from windows_architecture import native_architecture as windows_native_architecture
 
 HERE = Path(__file__).resolve().parent
 PYTHON_VERSION = "3.12.15"
@@ -40,6 +41,14 @@ def managed_python_version():
     return WINDOWS_PYTHON_VERSION if sys.platform == "win32" else PYTHON_VERSION
 
 
+def managed_python_request():
+    version = managed_python_version()
+    if sys.platform == "win32":
+        architecture = "aarch64" if host_architecture() == "arm64" else "x86_64"
+        return f"cpython-{version}-windows-{architecture}-none"
+    return "cpython@" + version
+
+
 def file_hash(path):
     value = hashlib.sha256()
     with Path(path).open("rb") as source:
@@ -49,6 +58,8 @@ def file_hash(path):
 
 
 def host_architecture():
+    if sys.platform == "win32":
+        return windows_native_architecture()
     if sys.platform == "darwin":
         result = subprocess.run(
             ["/usr/sbin/sysctl", "-n", "hw.optional.arm64"],
@@ -78,10 +89,12 @@ def require_supported_system(minimum_macos="13.0"):
     if system == "macos":
         require_macos(minimum_macos)
     else:
-        if sys.getwindowsversion().major < 10:
+        version = sys.getwindowsversion()
+        if version.major < 10:
             raise ValueError("requires_windows_10_or_later")
-        if host_architecture() != "x86_64":
-            raise ValueError("windows_x64_required")
+        architecture = host_architecture()
+        if architecture == "arm64" and version.build < 22000:
+            raise ValueError("windows_arm64_requires_windows_11_or_later")
     return system
 
 
@@ -347,7 +360,7 @@ def install_runtime(root, component):
         if not destination.is_symlink() and marker.is_file() and marker.read_text().strip() == asset["sha256"] and executable.is_file():
             if asset["platform"] == "windows" and component == "llama":
                 from windows_crt import ensure_windows_crt
-                ensure_windows_crt(root, executable.parent)
+                ensure_windows_crt(root, executable.parent, architecture=asset["architecture"])
             return executable
         raise ValueError("existing_runtime_incomplete: preserve it and choose a new setup root")
     archive = download_asset(
@@ -362,7 +375,7 @@ def install_runtime(root, component):
             raise ValueError("runtime_executable_missing_from_archive")
         if asset["platform"] == "windows" and component == "llama":
             from windows_crt import ensure_windows_crt
-            ensure_windows_crt(root, stage / asset["archive_root"])
+            ensure_windows_crt(root, stage / asset["archive_root"], architecture=asset["architecture"])
         (stage / ".auday-archive-sha256").write_text(asset["sha256"] + "\n")
         if sys.platform == "win32":
             # Windows rename is atomic and refuses an existing destination.
@@ -403,13 +416,14 @@ def ensure_python(root, uv_path=None):
     uv = Path(uv_path) if uv_path else ensure_uv(root)
     environment = managed_env(root)
     version = managed_python_version()
+    request = managed_python_request()
     report("Preparing private Python runtime", force=True)
     subprocess.run(
-        [str(uv), "--no-config", "python", "install", "cpython@" + version, "--no-bin"],
+        [str(uv), "--no-config", "python", "install", request, "--no-bin"],
         env=environment, check=True, timeout=600,
     )
     result = subprocess.run(
-        [str(uv), "--no-config", "python", "find", "--managed-python", "cpython@" + version],
+        [str(uv), "--no-config", "python", "find", "--managed-python", request],
         env=environment, capture_output=True, text=True, check=True, timeout=60,
     )
     executable = Path(result.stdout.strip()).resolve()
@@ -418,6 +432,8 @@ def ensure_python(root, uv_path=None):
     probe = f"import ssl,sqlite3,sys; assert sys.version_info[:3] == {tuple(map(int, version.split('.')))!r}"
     if sys.platform == "win32":
         probe += "; assert ssl.HAS_PSK; assert hasattr(ssl.SSLContext, 'set_psk_client_callback')"
+        expected = "win-arm64" if host_architecture() == "arm64" else "win-amd64"
+        probe += f"; import sysconfig; assert sysconfig.get_platform().lower() == {expected!r}, 'native_python_architecture_required'"
     subprocess.run([str(executable), "-I", "-c", probe], env=environment, check=True, timeout=30)
     return executable
 
@@ -454,10 +470,14 @@ def ensure_windows_link(root, uv_path=None, python_path=None):
     from platform_utils import exclusive_file_lock, secure_directory
 
     root = Path(root).expanduser().resolve()
+    architecture = host_architecture()
     secure_directory(root)
     requirements = HERE / "requirements-windows-link.txt"
     wanted = {"pythonVersion": WINDOWS_PYTHON_VERSION,
               "requirementsSHA256": file_hash(requirements)}
+    if architecture == "arm64":
+        wanted.update({"architecture": architecture,
+                       "buildRequirementsSHA256": file_hash(HERE / "requirements-windows-arm64-build.txt")})
     destination = root / "runtime/windows-link"
     marker = destination / ".auday-link-runtime.json"
     python = windows_link_python(root)
@@ -480,22 +500,26 @@ def ensure_windows_link(root, uv_path=None, python_path=None):
                     [str(uv), "--no-config", "venv", "--python", str(base_python), str(destination / "venv")],
                     env=environment, check=True, timeout=120, stdout=subprocess.DEVNULL,
                 )
-                subprocess.run(
-                    [str(uv), "--no-config", "pip", "install", "--python", str(python),
-                     "--require-hashes", "--only-binary", ":all:", "--no-deps", "-r", str(requirements)],
-                    env=environment, check=True, timeout=600, stdout=subprocess.DEVNULL,
-                )
-                _probe_windows_link(python, environment)
+                if architecture == "arm64":
+                    from windows_link_dependencies import install_arm64_link_dependencies
+                    install_arm64_link_dependencies(python, environment, uv=uv)
+                else:
+                    subprocess.run(
+                        [str(uv), "--no-config", "pip", "install", "--python", str(python),
+                         "--require-hashes", "--only-binary", ":all:", "--no-deps", "-r", str(requirements)],
+                        env=environment, check=True, timeout=600, stdout=subprocess.DEVNULL,
+                    )
+                _probe_windows_link(python, environment, architecture=architecture)
                 marker.write_text(json.dumps(wanted, sort_keys=True) + "\n")
             except BaseException:
                 shutil.rmtree(destination)
                 raise
             return python
-        _probe_windows_link(python, environment)
+        _probe_windows_link(python, environment, architecture=architecture)
     return python
 
 
-def _probe_windows_link(python, environment):
+def _probe_windows_link(python, environment, *, architecture):
     # Run the exact transport's capability probe, with no peer or credentials.
     probe = subprocess.run(
         [str(python), str(HERE / "windows_link.py"), "probe"],
@@ -503,7 +527,10 @@ def _probe_windows_link(python, environment):
     )
     try:
         result = json.loads(probe.stdout)
-        if result.get("ok") is not True or result.get("tlsPSK") is not True:
-            raise ValueError("windows_connection_runtime_probe_failed")
     except (ValueError, TypeError):
         raise ValueError("windows_connection_runtime_probe_failed") from None
+    if not isinstance(result, dict) or result.get("ok") is not True or result.get("tlsPSK") is not True:
+        raise ValueError("windows_connection_runtime_probe_failed")
+    expected = "win-arm64" if architecture == "arm64" else "win-amd64"
+    if result.get("interpreterPlatform") != expected:
+        raise ValueError("windows_connection_runtime_architecture_mismatch")

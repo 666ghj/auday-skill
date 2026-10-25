@@ -266,12 +266,22 @@ class FirstRunTests(unittest.TestCase):
 
     def test_windows_semantic_status_uses_supported_system_gate(self):
         with patch.object(setup_runtime.sys, "platform", "win32"), \
-                patch.object(setup_runtime.platform, "machine", return_value="AMD64"), \
+                patch.object(setup_runtime, "windows_native_architecture", return_value="x86_64"), \
                 patch.object(setup_runtime.sys, "getwindowsversion", create=True, return_value=SimpleNamespace(major=10)):
             status = first_run.setup_status(self.root)
         self.assertTrue(status["semantic"]["supported"])
         self.assertTrue(status["recommendSemantic"])
         self.assertGreater(status["semantic"]["runtimeArchiveBytes"], 0)
+
+    def test_windows_arm64_semantic_status_selects_native_assets(self):
+        with patch.object(setup_runtime.sys, "platform", "win32"), \
+                patch.object(setup_runtime, "windows_native_architecture", return_value="arm64"), \
+                patch.object(setup_runtime.sys, "getwindowsversion", create=True, return_value=SimpleNamespace(major=10, build=26100)):
+            status = first_run.setup_status(self.root)
+            expected = setup_runtime.runtime_asset("llama", "arm64", "windows")["size"]
+        self.assertTrue(status["semantic"]["supported"])
+        self.assertTrue(status["recommendSemantic"])
+        self.assertEqual(status["semantic"]["runtimeArchiveBytes"], expected)
 
     def test_unsupported_system_status_does_not_select_runtime(self):
         with patch.object(first_run, "require_supported_system", side_effect=ValueError("unsupported")), \
