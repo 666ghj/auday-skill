@@ -465,8 +465,12 @@ def setup_audio(root, model="small", diarize=True, *, uv_path=None):
             path = _download_model(asset, models, f"Downloading speaker {name} model")
             config[name + "Model"] = str(path)
     elif old.get("diarizationVerifiedAt"):
-        for key in ("segmentationModel", "embeddingModel", "diarizationVerifiedAt"):
+        for key in ("segmentationModel", "embeddingModel"):
             config[key] = old[key]
+        # Retain reusable weights, but a new native interpreter has not passed
+        # the previous environment's speaker inference check.
+        if old.get("platform") == config["platform"] and old.get("python") == config["python"]:
+            config["diarizationVerifiedAt"] = old["diarizationVerifiedAt"]
 
     report("Verifying transcription with public sample audio", force=True)
     # This upstream JFK sample is part of the pinned source archive.

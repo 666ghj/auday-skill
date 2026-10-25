@@ -301,6 +301,34 @@ class AudioSetupTests(unittest.TestCase):
         self.assertEqual(len(self.downloads), 1)
         self.assertNotIn("--extra", self.mocks[4].call_args[0][0])
 
+    def test_arm64_migration_does_not_reuse_x64_speaker_verification(self):
+        for name in ("segmentation.onnx", "embedding.onnx"):
+            (self.runtime / name).write_bytes(b"existing model")
+        (self.runtime / "config.json").write_text(json.dumps({
+            "schemaVersion": 1, "platform": "windows-x86_64",
+            "python": str(self.runtime / "venv/Scripts/python.exe"),
+            "segmentationModel": str(self.runtime / "segmentation.onnx"),
+            "embeddingModel": str(self.runtime / "embedding.onnx"),
+            "diarizationVerifiedAt": "2026-10-20T00:00:00Z",
+        }))
+        self.shared.host_architecture.return_value = "arm64"
+        with patch.object(audio_setup.platform, "system", return_value="Windows"), \
+                patch.object(audio_setup, "_prepare_windows_whisper", return_value=self.whisper), \
+                patch.object(audio_setup, "_prepare_windows_arm64_ffmpeg", return_value=self.ffmpeg):
+            result = audio_setup.setup_audio(self.root, diarize=False)
+        self.assertTrue(result["installed"])
+        self.assertFalse(result["diarizationReady"])
+        config = json.loads((self.runtime / "config.json").read_text())
+        self.assertTrue(Path(config["segmentationModel"]).is_file())
+        self.assertNotIn("diarizationVerifiedAt", config)
+
+    def test_same_runtime_opt_out_keeps_verified_speaker_capability(self):
+        audio_setup.setup_audio(self.root)
+        self.mocks[5].side_effect = [str(self.ffmpeg), str(self.cmake)]
+        result = audio_setup.setup_audio(self.root, diarize=False)
+        self.assertTrue(result["installed"])
+        self.assertTrue(result["diarizationReady"])
+
 
 class WindowsEngineInstallationTests(unittest.TestCase):
     def setUp(self):
