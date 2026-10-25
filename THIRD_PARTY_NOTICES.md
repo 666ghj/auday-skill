@@ -35,8 +35,8 @@ GPL-2.0-or-later. Preserve and consult the installed wheel's license files.
 
 Windows x64 audio setup downloads the official Whisper.cpp v1.7.6 CPU archive
 and an imageio-ffmpeg wheel. Windows ARM64 uses the official Whisper.cpp `b5454`
-archive at the v1.9.5 source revision and BtbN's FFmpeg 8.1.3 ARM64 LGPL build,
-from the pinned `autobuild-2026-09-30-13-08` release. BtbN is linked by the
+archive at the v1.9.5 source revision and BtbN's FFmpeg 8.1.2 ARM64 LGPL build,
+from the pinned `autobuild-2026-08-31-13-27` release. BtbN is linked by the
 [FFmpeg download page](https://ffmpeg.org/download.html). The selected ARM64
 FFmpeg binary is licensed under LGPL-3.0-or-later; its license is installed
 beside the executable.

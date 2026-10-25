@@ -13,6 +13,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import shutil
 import sqlite3
 import struct
 import subprocess
@@ -447,8 +448,21 @@ def main():
                 assert Path(audio_config[field]).resolve().is_relative_to(data.resolve()), field
             sample = data / "runtime/audio" / assets["whisperSource"]["directory"] / "samples/jfk.wav"
             sample_hash = file_hash(sample)
+            # Exercise the M4A/AAC format used by phone recordings as well as
+            # the upstream WAV sample, without reading any personal audio.
+            aac_directory = output / "aac-fixture"
+            aac_directory.mkdir()
+            shutil.copyfile(sample, aac_directory / "source.wav")
+            subprocess.run([
+                audio_config["ffmpeg"], "-v", "error", "-nostdin", "-i", "source.wav",
+                "-ar", "48000", "-ac", "2", "-c:a", "aac", "-b:a", "96k", "sample.m4a",
+            ], cwd=aac_directory, env=environment, check=True, timeout=180)
+            aac = aac_directory / "sample.m4a"
+            assert aac.is_file() and aac.stat().st_size > 0
+            aac_hash = file_hash(aac)
             for diarize, destination in ((False, "transcript 无说话人"), (True, "transcript 说话人")):
-                arguments = ["transcribe", "--audio", str(sample), "--output", str(output / destination),
+                selected_audio = sample if diarize else aac
+                arguments = ["transcribe", "--audio", str(selected_audio), "--output", str(output / destination),
                              "--language", "en"]
                 if not diarize:
                     arguments.append("--no-diarize")
@@ -458,6 +472,8 @@ def main():
                 actual = json.loads((output / destination / "result.json").read_text(encoding="utf-8"))
                 assert actual["diarization"]["status"] == ("completed" if diarize else "not_requested")
             assert file_hash(sample) == sample_hash, "Transcription changed its source audio"
+            assert file_hash(aac) == aac_hash, "Transcription changed its AAC source audio"
+            report["aacInputVerified"] = True
             for asset in [assets["models"][args.audio_model], *assets["diarization"].values()]:
                 path = data / "models/audio" / asset["filename"]
                 assert path.stat().st_size == asset["size"] and file_hash(path) == asset["sha256"]
