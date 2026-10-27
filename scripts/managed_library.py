@@ -203,17 +203,23 @@ def _readme(language):
 
 def _index(records, metadata, language):
     title = "Auday library index" if language == "en" else "Auday 资料库索引"
-    lines = [f"# {title}", "", "[Library guide](README.md) · [Your notes](notes/)", "",
+    links = ("[资料库说明](README.md) · [你的笔记](notes/)" if language == "zh-CN"
+             else "[Library guide](README.md) · [Your notes](notes/)")
+    lines = [f"# {title}", "", links, "",
              literal_block(_json({key: metadata.get(key) for key in (
                  "sourceDeviceID", "snapshot", "syncedAt", "sourceSnapshotAt",
                  "sourceSnapshotCurrent", "access", "recordCount",
              )}).decode("utf-8").rstrip("\n"))]
     groups = Counter((entry["date"], entry["kind"]) for entry in records)
-    lines += ["| Date | Kind | Records |", "| --- | --- | ---: |"]
+    table_heading = "| 日期 | 类型 | 记录数 |" if language == "zh-CN" else "| Date | Kind | Records |"
+    lines += [table_heading, "| --- | --- | ---: |"]
     lines.extend(f"| [{day}](records/{day}/{kind}/index.md) | {kind} | {count} |"
                  for (day, kind), count in sorted(groups.items()))
-    lines.extend(["", "The complete source ID and file inventory is in manifest.json. "
-                  "Open a date/kind index or search records/ in a text editor.", ""])
+    hint = ("manifest.json 保存完整的来源 ID 与文件清单。打开日期和类型对应的目录页，"
+            "或用文本编辑器在 records/ 中搜索。" if language == "zh-CN" else
+            "The complete source ID and file inventory is in manifest.json. "
+            "Open a date/kind index or search records/ in a text editor.")
+    lines.extend(["", hint, ""])
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
