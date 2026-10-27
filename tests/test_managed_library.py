@@ -1,5 +1,7 @@
 import hashlib
 from contextlib import closing
+import html
+import re
 import json
 import os
 from pathlib import Path
@@ -269,6 +271,89 @@ class ManagedLibraryTests(unittest.TestCase):
         self.run_library(language="zh-CN")
         self.assertEqual(self.run_library()["updatedRecords"], 0)
         self.assertEqual(self.manifest()["language"], "zh-CN")
+
+    def test_group_indexes_link_readable_titles_and_saved_times(self):
+        self.rows[1]["title"] = "Project handoff"
+        self.save()
+        result = self.run_library()
+        manifest = self.manifest()
+        self.assertEqual(result["groupCount"], 2)
+        self.assertEqual(sum(group["recordCount"] for group in manifest["groups"]), 2)
+        root_index = (self.destination / "index.md").read_text(encoding="utf-8")
+        for row in self.rows:
+            source = self.file(row["id"])
+            index = source.parent / "index.md"
+            content = index.read_text(encoding="utf-8")
+            self.assertIn(source.name, content)
+            self.assertIn(row["start"], html.unescape(content))
+            self.assertIn(row.get("title") or row["text"], html.unescape(content))
+            self.assertIn(index.relative_to(self.destination).as_posix(), root_index)
+            self.assertNotIn(source.name, root_index)
+
+    def test_directory_index_treats_markup_and_newlines_as_source_data(self):
+        malicious = 'A](/outside) ![image](https://example.invalid/x) | <script>x</script> `code`\n# Heading'
+        self.rows[0]["title"] = malicious
+        self.rows[1]["text"] = "No title\nSecond line"
+        self.save()
+        self.run_library()
+        index = self.file(self.rows[0]["id"]).parent / "index.md"
+        content = index.read_text(encoding="utf-8")
+        self.assertNotIn("<script>", content)
+        self.assertNotIn("![image]", content)
+        self.assertNotIn("\n# Heading", content)
+        links = re.findall(r"\]\(([^)]+)\)", content)
+        self.assertEqual(links, ["../../../index.md", self.file(self.rows[0]["id"]).name])
+        data_rows = [line for line in content.splitlines() if line.startswith("| ")][2:]
+        self.assertEqual(len(data_rows), 1)
+        self.assertEqual(data_rows[0].count("|"), 3)
+        second = (self.file("synthetic-2").parent / "index.md").read_text(encoding="utf-8")
+        self.assertIn("No title Second line", second)
+
+    def test_only_changed_directory_index_is_rewritten_and_empty_group_is_archived(self):
+        self.run_library()
+        changed = self.file(self.rows[0]["id"]).parent / "index.md"
+        unchanged = self.file("synthetic-2").parent / "index.md"
+        unchanged_time = unchanged.stat().st_mtime_ns
+        self.rows[0]["title"] = "Changed group preview"
+        self.metadata["snapshot"] = "b" * 64
+        self.save()
+        result = self.run_library()
+        self.assertEqual(result["updatedGroups"], 1)
+        self.assertIn("Changed group preview", changed.read_text(encoding="utf-8"))
+        self.assertEqual(unchanged.stat().st_mtime_ns, unchanged_time)
+        self.rows.pop(0)
+        self.save()
+        self.run_library()
+        self.assertFalse(changed.exists())
+        self.assertTrue(any("Changed group preview" in path.read_text(encoding="utf-8")
+                            for path in (self.destination / "archive").rglob("index.*.md")))
+        self.assertEqual(len(self.manifest()["groups"]), 1)
+
+    def test_old_view_gains_indexes_offline_and_inconsistent_group_counts_are_rejected(self):
+        self.run_library()
+        manifest = self.manifest()
+        for group in manifest.pop("groups"):
+            manifest["files"].pop(group["path"])
+            (self.destination / group["path"]).unlink()
+        manifest.pop("groupCount")
+        (self.destination / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        result = self.run_library()
+        self.assertEqual(result["updatedRecords"], 0)
+        self.assertEqual(result["updatedGroups"], 2)
+        valid = self.manifest()
+        for mutate in (
+            lambda value: value["groups"][0].update(recordCount=99),
+            lambda value: value["groups"].pop(),
+            lambda value: value["groups"][0].update(path="records/2026-10-21/memory/index.md"),
+            lambda value: value["files"].pop(value["groups"][0]["path"]),
+        ):
+            with self.subTest(mutation=mutate):
+                altered = json.loads(json.dumps(valid))
+                mutate(altered)
+                (self.destination / "manifest.json").write_text(json.dumps(altered), encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "invalid_library_manifest"):
+                    self.run_library()
+        (self.destination / "manifest.json").write_text(json.dumps(valid), encoding="utf-8")
 
     def test_source_content_is_inert_even_with_markdown_fences(self):
         self.rows[0]["text"] = "```\n![remote](https://example.invalid/image)\n<script>do evil</script>"
