@@ -116,7 +116,8 @@ class IncrementalPeer:
                 self.before_data(request)
             if operation in ("recordManifest", "list"):
                 start = request["offset"]
-                page = generation["rows"][start:start + 100]
+                page_size = 1000 if operation == "recordManifest" else 100
+                page = generation["rows"][start:start + page_size]
                 if operation == "recordManifest":
                     if not self.incremental:
                         raise AssertionError("incremental operation sent to legacy companion")
@@ -333,12 +334,12 @@ class IncrementalSyncTests(unittest.TestCase):
         self.assertEqual(audio.read_bytes(), b"independent verified synthetic audio")
 
     def test_pagination_and_batches_cover_complete_manifest(self):
-        rows = [record(f"synthetic-{number:04d}") for number in range(237)]
+        rows = [record(f"synthetic-{number:04d}") for number in range(2007)]
         self.peer.publish(rows)
         result = self.app.sync()
         self.assertEqual(result["downloadedRecords"], len(rows))
         pages = [call["offset"] for call in self.peer.calls if call["op"] == "recordManifest"]
-        self.assertEqual(pages, [0, 100, 200])
+        self.assertEqual(pages, [0, 1000, 2000])
         batches = [call["ids"] for call in self.peer.calls if call["op"] == "readRecords"]
         self.assertTrue(batches)
         self.assertTrue(all(1 <= len(batch) <= 100 for batch in batches))

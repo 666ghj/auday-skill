@@ -1,6 +1,6 @@
 # Local connection protocol
 
-This document describes the unchanged iPhone protocol consumed by the macOS and Windows clients. The desktop repository does not contain the iPhone app or its data adapter. Synthetic loopback peers exercise the contract; they are not installed with the skill and do not certify physical wireless behavior. Adding a Windows client does not require changing the phone's scope or wire format.
+This document describes the iPhone protocol consumed by the macOS and Windows clients, including optional capability-negotiated extensions. The desktop repository does not contain the iPhone app or its data adapter. Synthetic loopback peers exercise the contract; they are not installed with the skill and do not certify physical wireless behavior. Both desktop platforms use the same scope and wire format.
 
 ## Discovery and authentication
 
@@ -31,6 +31,8 @@ Successful replies include `ok`, `schemaVersion: 1`, `snapshot`, and `sourceDevi
 | `acquireSnapshot` | `snapshot` | Acquire a lease for an already prepared generation, when supported |
 | `releaseSnapshot` | `lease`, optional `snapshot` | Release this token, including a pending preparation without an identity |
 | `list` | `offset`, `snapshot`, optional `allowRecordChunks: true` | Up to 100 records or record-transfer descriptors and `nextOffset` |
+| `recordManifest` | `offset`, `snapshot`, optional `lease` | With `incrementalRecords`: up to 1,000 `{id, recordTransfer}` descriptors and `nextOffset`, without bodies |
+| `readRecords` | `ids` (1–100 unique IDs), `snapshot`, optional `lease` | With `incrementalRecords`: one descriptor per requested ID, optionally with Base64 `data` containing its exact JSON bytes |
 | `assets` | `offset`, `snapshot` | Up to 100 asset descriptors and `nextOffset`; no server paths |
 | `read` | `id`, optional `snapshot`, optional `allowRecordChunks: true` | One inline record or record-transfer descriptor |
 | `recordChunk` | `id`, `offset`, `length`, `snapshot` | Base64 bytes of one complete JSON record, with size and hashes |
@@ -40,7 +42,7 @@ Successful replies include `ok`, `schemaVersion: 1`, `snapshot`, and `sourceDevi
 Audio chunks are at most 256 KiB. Unknown operations, including mutation requests, are rejected. Errors use `ok: false` and a bounded error identifier. The server accepts asset IDs, never arbitrary filesystem paths.
 
 When `capabilities.snapshotLeases` is true, snapshot data operations (`list`,
-`assets`, `read`, `recordChunk`, `prepareAudio`, and `audio`) also accept the
+`assets`, `read`, `recordManifest`, `readRecords`, `recordChunk`, `prepareAudio`, and `audio`) also accept the
 operation's `lease` token. Clients do not send lease fields or operations to
 companions that do not advertise this capability.
 
@@ -84,6 +86,45 @@ The desktop JSON parser has a separate 128 MiB per-record resource bound. Malfor
 
 The separation of metadata and content follows the same engineering pattern as [LocalSend's preparation/transfer phases](https://github.com/localsend/protocol/blob/main/README.md#4-file-transfer-http-aka-upload-api). Snapshot-bound byte ranges follow the consistency principle of [HTTP Range and If-Range](https://www.rfc-editor.org/rfc/rfc9110.html#section-14). The Auday wire format remains its existing authenticated TLS JSON protocol; these references are design precedents, not claims of HTTP or LocalSend wire compatibility.
 
+### Incremental record transfer
+
+A phone advertising `capabilities.incrementalRecords: true` supports `recordManifest`
+and `readRecords` in the same immutable generation and lease as other data operations.
+The manifest covers every record in stable page order, with up to 1,000 entries per
+page within the response byte budget to reduce connection overhead. Each entry uses the existing
+`recordTransfer` schema (`encoding: "json-utf8"`, byte `size`, and `sha256`) for the
+phone's exact serialized record bytes. The client verifies page cursors, unique IDs,
+and the complete `recordCount` before using absence as a deletion.
+
+`readRecords` returns every requested descriptor, with `data` for bodies that fit
+the bounded response. It rejects empty, duplicate, unknown, non-string, or more than
+100 IDs. A descriptor without `data` is completed with `recordChunk`; this handles
+large individual records and batches whose combined bodies exceed the frame budget.
+Clients validate exact size, SHA-256, UTF-8 JSON, ID, and descriptor agreement with
+the manifest. A batch may arrive in any order but may not omit or duplicate IDs.
+The normal 2 MiB frame and 128 MiB per-record parser limits still apply.
+
+The desktop stores each verified wire fingerprint separately from a checksum of
+its saved JSON representation. It never assumes Swift and Python serialize JSON
+identically. Default `sync --mode incremental` reuses a record only when device,
+access scope, wire fingerprint, and local body checksum agree. Missing or damaged
+local rows are fetched again, including when the phone snapshot is unchanged.
+`sync --mode full` ignores reuse and retrieves all bodies. It does not expand access
+scope, delete downloaded audio or user notes, or rebuild all semantic vectors.
+
+Only a fully verified projection commits, in one SQLite transaction. Removed IDs
+leave the query projection; unchanged rows are not rewritten. Interrupted transfers
+keep the prior snapshot usable. The manifest and audio catalogue remain complete
+metadata transfers, and phone snapshot preparation still projects the full archive.
+This protocol does not require a durable change log, retained history cursor, or
+server-side per-computer state.
+
+Older companions remain supported through `list`. The result reports requested and
+effective modes plus an explicit fallback reason. The first upgraded synchronization
+without saved wire fingerprints downloads all bodies once. A capability claim followed
+by an invalid manifest or batch fails safely rather than silently falling back and
+masking an inconsistent snapshot.
+
 ### On-demand phone audio
 
 Skill 0.2.0 also accepts a server advertising `capabilities.onDemandAudio: true`. Its catalogue may return an asset with `preparation: "on-demand"` and a stable 64-character `contentRevision` instead of an eagerly prepared file hash and size. This revision describes the source version; it is not a download-integrity hash.
@@ -102,7 +143,7 @@ When present, `snapshotCapturedAt` and `snapshotCurrent` describe the phone's so
 
 The test peer reads an immutable synthetic `library.json` projection. Snapshot identity hashes the projection and scope. A production adapter must produce stable IDs and a consistent saved-data snapshot; do not expose a mutable app database directly. This fixture publisher is test-only; it is not a mobile implementation or a desktop runtime feature.
 
-The client commits complete snapshots transactionally. An unchanged identity avoids body downloads. An interrupted or inconsistent snapshot leaves the previous cache intact. This version does not implement a durable incremental event log. Scope reductions update subsequent syncs but cannot recall exported or offline copies.
+The client commits complete snapshots transactionally. Incremental-capable phones transfer only bodies that cannot be safely reused; legacy companions reuse an intact unchanged snapshot. An interrupted or inconsistent snapshot leaves the previous cache intact. There is no durable incremental event log. Scope reductions update subsequent syncs but cannot recall exported or offline copies.
 
 Writers sharing a canonical profile directory hold a reentrant thread lock and a
 cross-process `operation.lock` file for the entire sync or audio operation. This

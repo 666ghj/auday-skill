@@ -25,7 +25,9 @@ Deliver in the user's requested format and language. Usually a concise conclusio
 
 ## Readable files
 
-When the user wants to browse or search their own files, export the cached snapshot:
+For ongoing browsing, writing, or editor workflows, use the [maintained local library](library.md). It is refreshed after sync and can be rebuilt from the existing SQLite cache with `<auday> library`, including while the phone is offline. Keep personal notes and derived work in its `notes/` folder; retain source IDs when linking back to records. Search the current records, not archived removals or saved conflicts, unless the task explicitly needs history.
+
+For a separate static snapshot, export the cached library:
 
 ```text
 <auday> export --output <new-private-directory> --language en

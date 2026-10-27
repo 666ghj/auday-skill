@@ -1,4 +1,5 @@
 import hashlib
+from contextlib import closing
 import json
 import os
 from pathlib import Path
@@ -32,14 +33,14 @@ class ManagedLibraryTests(unittest.TestCase):
         self.metadata = {"snapshot": "a" * 64, "recordCount": 2, "sourceDeviceID": "synthetic-phone",
                          "syncedAt": "2026-10-20T12:00:00Z", "sourceSnapshotAt": "2026-10-20T11:59:00Z",
                          "sourceSnapshotCurrent": False, "access": "text-only-read-only"}
-        with sqlite3.connect(self.database) as connection:
+        with closing(sqlite3.connect(self.database)) as connection, connection:
             connection.executescript("CREATE TABLE records(id TEXT PRIMARY KEY, date TEXT, body TEXT);"
                                      "CREATE TABLE metadata(key TEXT PRIMARY KEY, value TEXT);")
         self.save()
 
     def save(self):
         self.metadata["recordCount"] = len(self.rows)
-        with sqlite3.connect(self.database) as connection:
+        with closing(sqlite3.connect(self.database)) as connection, connection:
             connection.execute("DELETE FROM records")
             connection.execute("DELETE FROM metadata")
             connection.executemany("INSERT INTO records VALUES(?,?,?)", [
@@ -181,7 +182,7 @@ class ManagedLibraryTests(unittest.TestCase):
     def test_bad_record_does_not_publish_partial_library(self):
         self.run_library()
         old = self.manifest()
-        with sqlite3.connect(self.database) as connection:
+        with closing(sqlite3.connect(self.database)) as connection, connection:
             connection.execute("UPDATE records SET body='invalid' WHERE id='synthetic-2'")
         with self.assertRaises(ValueError):
             self.run_library()

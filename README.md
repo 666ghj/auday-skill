@@ -60,7 +60,9 @@ Example requests:
 
 The agent can use exact keyword search or [local semantic search](references/semantic-search.md) for concepts and paraphrases. If you chose semantic search during setup, the agent builds the persistent index after the first sync. It does not send text to an embedding API. The agent shows processing stages and measured counts during synchronization, indexing and audio analysis.
 
-Your synchronized library is a SQLite file on disk, retained after restarting the computer. Ask the agent to [export readable files](references/context.md#readable-files) for an index and daily Markdown documents you can browse or search in a text editor.
+Synchronization defaults to incremental transfer with a compatible phone: a complete lightweight manifest is checked, and only new, changed, or locally damaged text bodies are downloaded. Ask for a full refresh to use `sync --mode full`. Older phones report an explicit full-transfer fallback; the first verified baseline still downloads all text once. Phone snapshot preparation remains a full-archive operation.
+
+Your synchronized SQLite database persists after restarting the computer. Sync also maintains a [local file library](references/library.md), with an index, records organized by date and type, complete source metadata, and a separate `notes/` folder for your own work. Unchanged files are reused; removed sources and edits to managed files are preserved separately. Existing caches can create this library offline with `library`. The [readable export](references/context.md#readable-files) remains available for independent static snapshots.
 
 ## Requirements
 

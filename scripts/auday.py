@@ -21,6 +21,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from progress import report
 from platform_utils import default_home, is_windows, lock_file, unlock_file, secure_directory
+from incremental_sync import body_hash, body_json, fetch_records
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_HOME = default_home()
@@ -150,6 +151,9 @@ class Auday:
             CREATE TABLE IF NOT EXISTS records(id TEXT PRIMARY KEY, kind TEXT, text TEXT, date TEXT, body TEXT);
             CREATE TABLE IF NOT EXISTS assets(id TEXT PRIMARY KEY, body TEXT);
             CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY, value TEXT);
+            CREATE TABLE IF NOT EXISTS record_fingerprints(
+                id TEXT PRIMARY KEY, wire_sha256 TEXT, wire_size INTEGER, body_sha256 TEXT NOT NULL
+            );
         """)
 
     def close(self):
@@ -170,6 +174,7 @@ class Auday:
     def request(self, payload, timeout=15):
         if self.snapshot_lease and payload.get("op") in (
             "list", "assets", "read", "recordChunk", "prepareAudio", "audio",
+            "recordManifest", "readRecords",
         ):
             if payload.get("snapshot") != self.snapshot_lease["snapshot"]:
                 raise ValueError("snapshot_changed")
@@ -264,19 +269,61 @@ class Auday:
         except (ValueError, OSError, subprocess.TimeoutExpired):
             report("Snapshot access finished; the phone will expire its temporary lease")
 
-    def sync(self):
+    def sync(self, mode="incremental"):
+        if mode not in ("incremental", "full"):
+            raise ValueError("invalid_sync_mode")
         with self.operation_lock:
+            started = time.perf_counter()
             report("Checking phone status", force=True)
             status = self.prepared_status()
+            prepared_at = time.perf_counter()
             capabilities = status.get("capabilities", {})
             with self.snapshot_access(
                 status.get("snapshot"),
                 capabilities if isinstance(capabilities, dict) else {},
                 prepared_lease=status.get("lease"),
             ):
-                return self._sync(status)
+                result = self._sync(status, mode)
+            transferred_at = time.perf_counter()
+            try:
+                result["library"] = self.library()
+                result["libraryStatus"] = "ready"
+            except (OSError, ValueError, sqlite3.Error) as error:
+                # The verified source projection already committed. Keep a file
+                # maintenance failure separate and recover it offline next time.
+                report("Text sync saved; local file library needs an offline refresh", force=True)
+                result["libraryStatus"] = "failed"
+                result["libraryError"] = type(error).__name__
+            result["timings"] = {
+                "prepareSeconds": round(prepared_at - started, 3),
+                "transferAndCommitSeconds": round(transferred_at - prepared_at, 3),
+                "librarySeconds": round(time.perf_counter() - transferred_at, 3),
+            }
+            last_sync = {key: result[key] for key in (
+                "requestedMode", "effectiveMode", "fallbackReason", "downloadedRecords",
+                "reusedRecords", "changedRecords", "deletedRecords", "libraryStatus", "timings",
+                "syncedAt", "snapshot",
+            )}
+            try:
+                with self.db:
+                    self.db.execute("INSERT OR REPLACE INTO metadata VALUES(?,?)", ("lastSync", json.dumps(last_sync)))
+                result["syncReportSaved"] = True
+            except sqlite3.Error:
+                # Disk exhaustion during file publication must not turn the
+                # already committed source sync into an apparent transfer failure.
+                result["syncReportSaved"] = False
+                report("Text sync saved; its final summary could not be recorded", force=True)
+            result["lastSync"] = last_sync
+            return result
 
-    def _sync(self, status):
+    def library(self, language=None):
+        from managed_library import maintain_library
+        with self.operation_lock:
+            return maintain_library(
+                self.root / "library.sqlite", self.root / "library", language=language, progress=report,
+            )
+
+    def _sync(self, status, mode="incremental"):
         snapshot = status["snapshot"]
         if (
             not isinstance(status.get("sourceDeviceID"), str)
@@ -302,17 +349,29 @@ class Auday:
             raise ValueError("invalid_capabilities")
         if type(status.get("snapshotCurrent", False)) is not bool:
             raise ValueError("invalid_snapshot_freshness")
-        return self._sync_snapshot(status)
+        return self._sync_snapshot(status, mode)
 
-    def _sync_snapshot(self, status):
+    def _sync_snapshot(self, status, mode="incremental"):
         snapshot = status["snapshot"]
         capabilities = status.get("capabilities", {})
         previous = self.metadata()
+        incremental = capabilities.get("incrementalRecords") is True
+        mode_result = {
+            "requestedMode": mode,
+            "effectiveMode": mode if incremental else "full",
+            "fallbackReason": "phone_does_not_support_incremental_records"
+            if mode == "incremental" and not incremental else None,
+        }
+        if mode_result["fallbackReason"]:
+            report("This phone requires full text transfer when its snapshot changes")
         if (
-            previous.get("snapshot") == snapshot
+            mode != "full"
+            and previous.get("snapshot") == snapshot
             and previous.get("recordCount") == status["recordCount"]
             and previous.get("assetCount") == status["assetCount"]
             and previous.get("access") == status["access"]
+            and self.cached_records_intact(status["recordCount"])
+            and self.db.execute("SELECT COUNT(*) FROM assets").fetchone()[0] == status["assetCount"]
         ):
             source_freshness = self.final_source_freshness(status)
             with self.db:
@@ -325,15 +384,24 @@ class Auday:
             report("Snapshot unchanged; reusing cached records")
             return {
                 **self.metadata(),
+                **mode_result,
                 "changedRecords": 0,
                 "downloadedRecords": 0,
+                "reusedRecords": status["recordCount"],
+                "deletedRecords": 0,
                 "audioDownloaded": False,
             }
         record_rows, asset_rows, staged_records = [], [], []
+        fingerprints = {}
+        downloaded, reused = status["recordCount"], 0
+        if incremental:
+            record_rows, fingerprints, downloaded, reused = fetch_records(self, status, mode, staged_records)
         for op, field, destination in [
             ("list", "records", record_rows),
             ("assets", "assets", asset_rows),
         ]:
+            if op == "list" and incremental:
+                continue
             offset = 0
             total = status["recordCount" if op == "list" else "assetCount"]
             stage = "Receiving text records" if op == "list" else "Receiving audio catalog"
@@ -399,12 +467,15 @@ class Auday:
                 or not re.fullmatch("[0-9a-f]{64}", str(row.get("sha256", "")))
             ):
                 raise ValueError("invalid_asset_metadata")
-        # Full verified snapshot replaces the query projection only; downloaded files/results remain.
-        before = {r[0]: r[1] for r in self.db.execute("SELECT id,body FROM records")}
-        changed = sum(
-            before.get(row["id"]) != json.dumps(row, ensure_ascii=False, sort_keys=True)
-            for row in record_rows
-        )
+        # Commit only after the full manifest/projection and all bodies verify.
+        # Remove stale query rows, never downloaded files or user-created work.
+        before_rows = {row[0]: row for row in self.db.execute("SELECT id,kind,text,date,body FROM records")}
+        before = {identity: row[4] for identity, row in before_rows.items()}
+        bodies = {row["id"]: body_json(row) for row in record_rows}
+        changed = sum(before.get(identity) != body for identity, body in bodies.items())
+        deleted = set(before) - set(bodies)
+        if not incremental:
+            fingerprints = {identity: (None, None, body_hash(body)) for identity, body in bodies.items()}
         source_freshness = self.final_source_freshness(status)
         meta = {
             "sourceDeviceID": status["sourceDeviceID"],
@@ -430,23 +501,30 @@ class Auday:
         ]
         report("Saving local library")
         with self.db:
-            self.db.execute("DELETE FROM records")
-            self.db.execute("DELETE FROM assets")
+            self.db.executemany("DELETE FROM records WHERE id=?", [(identity,) for identity in deleted])
+            self.db.execute("DELETE FROM record_fingerprints WHERE id NOT IN (SELECT id FROM records)")
             for row in record_rows:
-                body = json.dumps(row, ensure_ascii=False, sort_keys=True)
+                body = bodies[row["id"]]
+                projection = self.record_projection(row, body)
+                if before_rows.get(row["id"]) == projection:
+                    continue
                 self.db.execute(
-                    "INSERT INTO records VALUES(?,?,?,?,?)",
-                    (
-                        row["id"],
-                        row["kind"],
-                        str(row.get("text", "")) + " " + str(row.get("title", "")),
-                        row.get("start", ""),
-                        body,
-                    ),
+                    "INSERT OR REPLACE INTO records VALUES(?,?,?,?,?)",
+                    projection,
                 )
             self.db.executemany(
-                "INSERT INTO assets VALUES(?,?)",
-                [(r["id"], json.dumps(r, ensure_ascii=False)) for r in asset_rows],
+                "INSERT INTO record_fingerprints VALUES(?,?,?,?) "
+                "ON CONFLICT(id) DO UPDATE SET wire_sha256=excluded.wire_sha256, "
+                "wire_size=excluded.wire_size, body_sha256=excluded.body_sha256 "
+                "WHERE wire_sha256 IS NOT excluded.wire_sha256 OR wire_size IS NOT excluded.wire_size "
+                "OR body_sha256 IS NOT excluded.body_sha256",
+                [(identity, *fingerprint) for identity, fingerprint in fingerprints.items()],
+            )
+            asset_ids = {row["id"] for row in asset_rows}
+            self.db.executemany("DELETE FROM assets WHERE id=?", [(identity,) for identity in set(old_assets) - asset_ids])
+            self.db.executemany(
+                "INSERT OR REPLACE INTO assets VALUES(?,?)",
+                [(r["id"], json.dumps(r, ensure_ascii=False)) for r in asset_rows if old_assets.get(r["id"]) != r],
             )
             self.db.executemany(
                 "INSERT OR REPLACE INTO metadata VALUES(?,?)",
@@ -455,7 +533,36 @@ class Auday:
         for path in staged_records:
             path.unlink(missing_ok=True)
         report("Synchronization complete")
-        return {**meta, "changedRecords": changed, "audioDownloaded": False}
+        return {
+            **meta, **mode_result, "changedRecords": changed, "downloadedRecords": downloaded,
+            "reusedRecords": reused, "deletedRecords": len(deleted), "audioDownloaded": False,
+        }
+
+    def cached_records_intact(self, count):
+        rows = self.db.execute(
+            "SELECT records.id,records.kind,records.text,records.date,records.body,record_fingerprints.body_sha256 FROM records "
+            "LEFT JOIN record_fingerprints ON records.id=record_fingerprints.id"
+        ).fetchall()
+        if len(rows) != count:
+            return False
+        for row in rows:
+            body, digest = row[4], row[5]
+            if not isinstance(body, str) or body_hash(body) != digest:
+                return False
+            try:
+                if self.record_projection(json.loads(body), body) != row[:5]:
+                    return False
+            except (ValueError, TypeError, KeyError, AttributeError):
+                return False
+        return True
+
+    @staticmethod
+    def record_projection(record, body):
+        return (
+            record["id"], record["kind"],
+            str(record.get("text", "")) + " " + str(record.get("title", "")),
+            record.get("start", ""), body,
+        )
 
     def final_source_freshness(self, captured):
         """Observe freshness without replacing or restarting this fixed snapshot."""
@@ -887,7 +994,12 @@ def main():
         target.add_argument("--host")
         pair.add_argument("--port", type=int)
         pair.add_argument("--peer-to-peer", action="store_true")
-    commands.add_parser("sync")
+    sync = commands.add_parser("sync")
+    sync.add_argument("--mode", choices=["incremental", "full"], default="incremental",
+                      help="Reuse verified unchanged records by default; full downloads all text again")
+    library = commands.add_parser("library", help="Maintain readable files from the saved library, without the phone")
+    library.add_argument("--language", choices=["en", "zh-CN"], default=None,
+                         help="Choose file labels; otherwise preserve the library's saved language")
     status = commands.add_parser("status")
     status.add_argument("--live", action="store_true")
     search = commands.add_parser("search")
@@ -1061,7 +1173,9 @@ def main():
             subprocess.run(command, check=True)
             atomic_json(app.root / "connection.json", config)
         elif args.command == "sync":
-            dump(app.sync())
+            dump(app.sync(mode=args.mode))
+        elif args.command == "library":
+            dump(app.library(language=args.language))
         elif args.command == "status":
             dump(
                 {
