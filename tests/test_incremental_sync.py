@@ -163,6 +163,28 @@ class IncrementalPeer:
         return reply
 
 
+class FrameBudgetPeer(IncrementalPeer):
+    """Apply the phone's 1 MiB batch budget, omitting bodies that do not fit."""
+
+    def __init__(self, rows):
+        super().__init__(rows)
+        self.max_batch_bytes = 0
+
+    def __call__(self, request):
+        reply = super().__call__(request)
+        if request["op"] == "readRecords":
+            pending = [(row, row.pop("data", None)) for row in reply["records"]]
+            for row, data in pending:
+                if data is None:
+                    continue
+                row["data"] = data
+                if len(json.dumps(reply, separators=(",", ":")).encode()) > 1024 * 1024:
+                    row.pop("data")
+            size = len(json.dumps(reply, separators=(",", ":")).encode())
+            self.max_batch_bytes = max(self.max_batch_bytes, size)
+        return reply
+
+
 class IncrementalSyncTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix="auday-incremental-synthetic-")
@@ -233,6 +255,7 @@ class IncrementalSyncTests(unittest.TestCase):
         self.assertEqual(result["changedRecords"], 0)
         self.assertEqual(result["deletedRecords"], 0)
         self.assertEqual(self.peer.body_ids, [])
+        self.assertNotIn("recordManifest", [call["op"] for call in self.peer.calls])
         self.assertFalse(self.peer.leases)
 
     def test_explicit_full_retransfers_every_body_even_for_unchanged_snapshot(self):
@@ -245,6 +268,16 @@ class IncrementalSyncTests(unittest.TestCase):
         self.assertEqual(result["reusedRecords"], 0)
         self.assertEqual(result["changedRecords"], 0)
         self.assertEqual(sorted(self.peer.body_ids), ["edited", "removed", "stable"])
+
+    def test_full_sync_repairs_query_columns_even_when_record_body_is_intact(self):
+        self.app.sync()
+        with self.app.db:
+            self.app.db.execute(
+                "UPDATE records SET text='damaged projection',kind='memory',date='' WHERE id='stable'"
+            )
+        self.app.sync(mode="full")
+        matches = self.app.search("Synthetic text stable", kind="transcript", date="2026-10-28")
+        self.assertEqual([row["id"] for row in matches["records"]], ["stable"])
 
     def test_legacy_companion_falls_back_explicitly_without_new_operations(self):
         self.peer.incremental = False
@@ -311,6 +344,21 @@ class IncrementalSyncTests(unittest.TestCase):
         self.assertTrue(all(1 <= len(batch) <= 100 for batch in batches))
         self.assertEqual(sorted(identity for batch in batches for identity in batch), sorted(row["id"] for row in rows))
         self.assertEqual(len(self.peer.body_ids), len(set(self.peer.body_ids)))
+
+    def test_byte_budget_batches_avoid_chunk_requests_for_ordinary_records(self):
+        rows = [record(f"synthetic-{number:03d}", "x" * 20000) for number in range(100)]
+        self.peer = FrameBudgetPeer(rows)
+        self.app.transport = self.peer
+        result = self.app.sync()
+        batches = [call for call in self.peer.calls if call["op"] == "readRecords"]
+        self.assertEqual(result["downloadedRecords"], 100)
+        # These bodies need several bounded batches, not one oversized batch
+        # followed by dozens of individual recordChunk connections.
+        self.assertGreater(len(batches), 1)
+        self.assertLessEqual(len(batches), 4)
+        self.assertEqual(self.peer.chunk_offsets, [])
+        self.assertLessEqual(self.peer.max_batch_bytes, 1024 * 1024)
+        self.assertEqual(self.app.read(rows[-1]["id"])["record"], rows[-1])
 
     def test_descriptor_only_batch_entries_use_verified_record_chunks(self):
         large = record("large", "合成 Unicode " * 90000)
