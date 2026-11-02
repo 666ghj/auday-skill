@@ -11,6 +11,7 @@ import sqlite3
 import tempfile
 
 from platform_utils import is_windows, secure_directory
+from record_kinds import display_kind
 
 
 LABELS = {
@@ -19,9 +20,9 @@ LABELS = {
         "coverage": "Readable record text, timestamps, states and source IDs. Complete structured payloads remain in the SQLite database. Audio files are not included. This is a saved snapshot, not a live folder.",
         "date": "Date", "count": "Records", "undated": "Undated", "record": "Record",
         "id": "Source ID", "start": "Start", "end": "End", "zone": "Time zone",
-        "state": "State", "name": "Title", "sources": "Related source IDs",
+        "state": "State", "name": "Title", "sources": "Related source IDs", "marks": "Manual marks",
         "search": "Open this folder in a text editor for folder-wide search, or open a daily file and use Find. Files use the preserved record date; a memory's date may be its creation date, not the date of the event it describes.",
-        "transcript": "Transcript", "highlight": "Highlight", "summary": "Summary",
+        "transcript": "Transcript", "mark": "Manual Mark", "highlight": "Highlight", "summary": "Summary",
         "reflection": "Reflection", "memory": "Memory",
     },
     "zh-CN": {
@@ -29,9 +30,9 @@ LABELS = {
         "coverage": "这里保存可读正文、时间、状态和来源 ID；完整结构化内容仍保存在 SQLite 数据库中。本目录不包含音频文件，是一次导出的静态快照，不会自动更新。",
         "date": "日期", "count": "记录数", "undated": "日期不明", "record": "记录",
         "id": "来源 ID", "start": "开始时间", "end": "结束时间", "zone": "时区",
-        "state": "状态", "name": "标题", "sources": "关联来源 ID",
+        "state": "状态", "name": "标题", "sources": "关联来源 ID", "marks": "关联手动标记",
         "search": "可以用文本编辑器打开整个目录进行全文查找，也可以打开某一天的文件后查找。本目录按记录保存的日期分组；记忆的日期可能是创建时间，不一定是所描述事件的发生时间。",
-        "transcript": "转写", "highlight": "重点", "summary": "摘要",
+        "transcript": "转写", "mark": "手动标记", "highlight": "重点", "summary": "摘要",
         "reflection": "日反思", "memory": "记忆",
     },
 }
@@ -96,7 +97,8 @@ def export_library(database, destination, language="en", progress=None):
                 )
                 os.chmod(path, 0o600)
             counts[day] += 1
-            kinds[row.get("kind", "unknown")] += 1
+            kind = display_kind(row)
+            kinds[kind] += 1
             fields = [
                 ("id", row.get("id", "")), ("start", row.get("start", "")),
                 ("end", row.get("end", "")), ("zone", row.get("timeZone", "")),
@@ -105,9 +107,11 @@ def export_library(database, destination, language="en", progress=None):
             ]
             if row.get("sourceIDs"):
                 fields.append(("sources", json.dumps(row["sourceIDs"], ensure_ascii=False)))
+            payload = row.get("payload")
+            if kind == "transcript" and isinstance(payload, dict) and payload.get("manualMarks"):
+                fields.append(("marks", json.dumps(payload["manualMarks"], ensure_ascii=False)))
             with path.open("a", encoding="utf-8") as output:
-                kind = labels.get(row.get("kind"), labels["record"])
-                output.write(f"## {counts[day]} · {kind}\n\n")
+                output.write(f"## {counts[day]} · {labels.get(kind, labels['record'])}\n\n")
                 output.write(literal_block("\n".join(
                     f"{labels[key]}: {value}" for key, value in fields if value != ""
                 )))

@@ -24,6 +24,7 @@ import tempfile
 import threading
 import time
 
+from record_kinds import kind_filter, search_result
 from platform_utils import (
     is_windows, lock_file, unlock_file, secure_directory, start_process, stop_process,
 )
@@ -598,8 +599,9 @@ def _search(root, query, kind, date, limit, *, encoder):
             vector = _normalize(active.encode(POLICY["queryPrefix"] + query.strip()))
         clauses, values = [], []
         if kind:
-            clauses.append("r.kind=?")
-            values.append(kind)
+            clause, parameters = kind_filter(kind)
+            clauses.append(clause)
+            values.extend(parameters)
         if date:
             clauses.append("r.date LIKE ?")
             values.append(date + "%")
@@ -614,12 +616,12 @@ def _search(root, query, kind, date, limit, *, encoder):
             if row[0] not in best or score > best[row[0]][0]:
                 best[row[0]] = (score, row[:9])
         hits = heapq.nsmallest(limit, best.values(), key=lambda item: (-item[0], item[1][0]))
-        records = [{
+        records = [search_result({
             "id": row[0], "recordID": row[0], "kind": row[1], "start": row[2],
             "state": json.loads(row[3]), "title": row[4], "text": row[8],
             "score": round(score, 6), "scoreType": "cosine_similarity",
             "chunk": {"ordinal": row[5], "startCharacter": row[6], "endCharacter": row[7]},
-        } for score, row in hits]
+        }) for score, row in hits]
         report("Semantic search complete", len(records), len(records), "results", force=True)
         return {"mode": "semantic", "freshness": "last_synced_snapshot",
                 "syncedAt": current_source["syncedAt"], "snapshot": manifest["source"]["snapshot"],

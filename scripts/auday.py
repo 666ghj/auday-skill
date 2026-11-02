@@ -20,6 +20,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from progress import report
+from record_kinds import SEARCH_KINDS, WIRE_KINDS, kind_filter, search_result
 from platform_utils import default_home, is_windows, lock_file, unlock_file, secure_directory
 from incremental_sync import body_hash, body_json, fetch_records
 
@@ -442,13 +443,7 @@ class Auday:
             ) or len({r["id"] for r in rows}) != len(rows):
                 raise ValueError("duplicate_or_missing_id")
         for row in record_rows:
-            if row.get("kind") not in (
-                "transcript",
-                "highlight",
-                "summary",
-                "reflection",
-                "memory",
-            ):
+            if row.get("kind") not in WIRE_KINDS:
                 raise ValueError("invalid_record_kind")
             if status["access"] == "text-only-read-only" and (
                 "audioAssetID" in row or "audioAssetIDs" in row
@@ -705,18 +700,19 @@ class Auday:
                 + "%"
             )
         if kind:
-            clauses.append("kind=?")
-            values.append(kind)
+            clause, parameters = kind_filter(kind)
+            clauses.append(clause)
+            values.extend(parameters)
         if date:
             clauses.append("date LIKE ?")
             values.append(date + "%")
         sql = (
-            "SELECT body FROM records"
+            "SELECT body FROM records AS r"
             + (" WHERE " + " AND ".join(clauses) if clauses else "")
             + " ORDER BY date,id LIMIT ? OFFSET ?"
         )
         rows = [
-            json.loads(r[0]) for r in self.db.execute(sql, values + [limit + 1, offset])
+            search_result(json.loads(r[0])) for r in self.db.execute(sql, values + [limit + 1, offset])
         ]
         report("Keyword search complete")
         return {
@@ -1004,9 +1000,7 @@ def main():
     status.add_argument("--live", action="store_true")
     search = commands.add_parser("search")
     search.add_argument("query", nargs="?", default="")
-    search.add_argument(
-        "--kind", choices=["transcript", "highlight", "summary", "reflection", "memory"]
-    )
+    search.add_argument("--kind", choices=SEARCH_KINDS)
     search.add_argument("--date")
     search.add_argument("--limit", type=int, default=20)
     search.add_argument("--offset", type=int, default=0)

@@ -157,6 +157,10 @@ clients and SQLite connections instead of reusing inherited instances.
 
 Records use stable `id` values and one of `transcript`, `highlight`, `summary`, `reflection`, or `memory`. Preserve source IDs, original timestamps/time zones, saved/generated status, and revision information. Candidate memories remain candidates.
 
+When `capabilities.manualMarks` is true, both read-only scopes include each saved manual Watch Mark, independently of the body signals and location setting. A Mark identifies the instant the user tapped during recording. It uses the existing wire kind `highlight`, the reserved ID `mark:<UUID>`, state `user-marked`, and `payload.contentType` of `manual-mark`. The record's `start` is the marked instant. Its payload carries `markID`, `sessionID`, and `timelineOffsetSeconds` relative to the recording timeline origin.
+
+The Mark's top-level `sourceIDs` link to transcript records from the same recording that intersect the 60 seconds on either side of the tap. A Mark can have an empty list. A transcript containing the instant also includes `payload.manualMarks` entries with the Mark record's `id` and `start`. Its spoken text stays intact. Older phones may only expose incidental Mark references inside generated Highlights. An empty search against such a snapshot cannot establish whether the user tapped the Watch.
+
 An on-demand catalogue entry contains its `id`, `preparation: "on-demand"`, and `contentRevision`, with available source timing metadata. Prepared or eager assets include `mime`, `size`, `sha256`, duration, and timeline spans when available. Catalogue metadata does not mean the file has been prepared or downloaded. The test peer's `path` is local to its export root and never sent to the client. A timeline span maps `fileStart`/`fileEnd` seconds to a timezone-aware `recordedStart`; gaps must not be compressed into invented wall-clock continuity.
 
 Do not include API keys, OS credential-store items, internal configuration, or unrelated files in the projection. “All text” refers to authorized Auday business data, not the entire application container.

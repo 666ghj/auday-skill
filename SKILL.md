@@ -1,6 +1,6 @@
 ---
 name: auday
-description: Bring Auday memories, transcripts, Highlights, reflections, and recordings into a user's desktop AI workflow on Mac or Windows. Connect to a compatible Auday iPhone app, retrieve context with sources, or analyze audio locally. Use for Auday requests, not unrelated audio or generic notes.
+description: Bring Auday memories, transcripts, Watch marks, Highlights, reflections, and recordings into a user's desktop AI workflow on Mac or Windows. Connect to a compatible Auday iPhone app, retrieve context with sources, or analyze audio locally. Use for Auday requests, not unrelated audio or generic notes.
 license: MIT
 ---
 
@@ -37,6 +37,7 @@ Recommend local semantic search once during first-run setup, describing its down
 | Install on a new computer or prepare a missing capability | Check the environment, offer semantic setup, prepare selected tools and verify them | [First-run setup](references/first-run.md) |
 | Connect, sync, or recover a connection | Use local discovery and a local password prompt | [Connection](references/connection.md) |
 | Browse or maintain a lasting local file library | Refresh the managed library; keep user notes separate from source records | [Local library](references/library.md) |
+| Find recording moments marked on Apple Watch | List manual marks with `search --kind mark`, then read the linked transcript sources | [Context workflows](references/context.md) |
 | Find a discussion, prepare a brief, reflect, extract follow-ups | Check freshness, search narrowly, expand sources | [Context workflows](references/context.md) |
 | Search by meaning or prepare local semantic retrieval | Check the local model and index, then retrieve relevant passages | [Semantic search](references/semantic-search.md) |
 | Analyze recordings on the computer | Fetch selected audio and create independent local derivatives | [Audio analysis](references/audio.md) |

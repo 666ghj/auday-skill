@@ -23,6 +23,22 @@ Keyword search (`search --mode keyword`) suits exact words, names and phrases. U
 
 Deliver in the user's requested format and language. Usually a concise conclusion, important evidence, open questions, and the data cutoff are enough. Store private reports in the user's chosen location or an appropriate local private directory, not in this repository.
 
+## Apple Watch recording marks
+
+To find moments the user marked while recording, list the marks for the requested date. Both phone access scopes include them when the companion supports manual marks.
+
+```text
+<auday> search --kind mark --date YYYY-MM-DD --limit 20
+```
+
+Use the returned `nextOffset` as `--offset` for the next page. Each mark has a stable `mark:<UUID>` ID, the time of the tap in `start`, and the recording offset in `payload.timelineOffsetSeconds`. Read the mark by ID and follow any `sourceIDs` for nearby speech. A mark with no linked transcript still records a tap. When a mark falls inside a transcript interval, the transcript's `payload.manualMarks` links back to the mark. Keep the tap separate from the words spoken.
+
+When laying out a recording's transcript in time order, also list marks for the dates it spans. Match `payload.sessionID` to the recording and include each Mark ID once at its own `start`. This preserves taps made between utterances.
+
+`--kind highlight` selects AI Highlights. Both keyword and semantic searches report `displayKind: mark` for a manual mark. The original phone record returned by `read` retains the compatible `kind: highlight`, `state: user-marked`, and `payload.contentType: manual-mark`. In the maintained file library, open the dated `highlight/` index and look for the Mark title. The daily Markdown export labels each manual mark separately. An AI Highlight may cite mark IDs, so use the standalone records to count taps.
+
+If a search finds no marks, check the cached status from the last sync. A snapshot with `cache.capabilities.manualMarks` set to `true` supports these records. When the capability is absent, an empty result only establishes that the saved snapshot provides no standalone marks.
+
 ## Readable files
 
 For ongoing browsing, writing, or editor workflows, use the [maintained local library](library.md). It is refreshed after sync and can be rebuilt from the existing SQLite cache with `<auday> library`, including while the phone is offline. Keep personal notes and derived work in its `notes/` folder; retain source IDs when linking back to records. Search the current records, not archived removals or saved conflicts, unless the task explicitly needs history.
