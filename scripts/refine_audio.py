@@ -199,7 +199,7 @@ def _analyze(args, audio, model, out, ffmpeg, whisper_cli, native):
                 args.language,
                 "-t",
                 str(args.threads),
-                "-ojf",
+                "-oj",
                 "-of",
                 "whisper" if native["cwd"] else str(out / "whisper"),
                 "-np",
@@ -208,7 +208,11 @@ def _analyze(args, audio, model, out, ffmpeg, whisper_cli, native):
             stderr=log,
             cwd=native["cwd"], check=True, timeout=21600,
         )
-    raw = json.loads((out / "whisper.json").read_text(encoding="utf-8"))
+    # Whisper.cpp may emit byte-level fragments of multibyte (e.g. CJK)
+    # characters; never let one malformed byte abort the transcript.
+    raw = json.loads(
+        (out / "whisper.json").read_bytes().decode("utf-8", errors="replace")
+    )
     segments = []
     for index, row in enumerate(raw.get("transcription", [])):
         left = float(row["offsets"]["from"]) / 1000

@@ -129,6 +129,32 @@ class AudioRunnerTests(unittest.TestCase):
         self.assertIn("Transcription complete", self.progress)
         self.assertNotIn("Identifying anonymous speaker turns", self.progress)
 
+    def test_cjk_transcript_survives_malformed_utf8_from_engine(self):
+        def process(command, **kwargs):
+            if command[0] != "whisper-cli":
+                return self.synthetic_process(command, **kwargs)
+            self.assertIn("-oj", command)
+            self.assertNotIn("-ojf", command)
+            prefix = command[command.index("-of") + 1]
+            path = Path(kwargs["cwd"]) / prefix if kwargs.get("cwd") else Path(prefix)
+            body = json.dumps({"transcription": [
+                {"offsets": {"from": 0, "to": 1000}, "text": "こんにちは"},
+                {"offsets": {"from": 1000, "to": 2000}, "text": "FRAGMENT"},
+            ]}, ensure_ascii=False).encode("utf-8")
+            # A lone lead byte of a three-byte character, as a split token emits.
+            path.with_suffix(".json").write_bytes(body.replace(b"FRAGMENT", b"\xe3\x81"))
+        stream = io.StringIO()
+        with patch.object(sys, "argv", self.arguments + ["--no-diarize"]), \
+                patch.object(refine_audio.shutil, "which", return_value="/synthetic/tool"), \
+                patch.object(refine_audio.subprocess, "run", side_effect=process), \
+                patch.dict(sys.modules, {"sherpa_onnx": None, "soundfile": None}), \
+                contextlib.redirect_stdout(stream), contextlib.redirect_stderr(io.StringIO()):
+            refine_audio.main()
+        self.assertTrue(json.loads(stream.getvalue())["ok"])
+        result = json.loads((self.output / "result.json").read_text(encoding="utf-8"))
+        self.assertEqual(result["segments"][0]["text"], "こんにちは")
+        self.assertIn("こんにちは", (self.output / "transcript.md").read_text(encoding="utf-8"))
+
     def test_default_missing_models_stops_before_transcription(self):
         stream = io.StringIO()
         with patch.object(sys, "argv", self.arguments), \
