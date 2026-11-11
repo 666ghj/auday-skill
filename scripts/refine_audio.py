@@ -11,6 +11,12 @@ from progress import report
 from platform_utils import is_windows
 
 
+_UTF8_REPLACEMENT_NOTE = (
+    "Whisper output contained invalid UTF-8 and was decoded with replacement "
+    "characters (U+FFFD). Review any affected text against the original audio."
+)
+
+
 def digest(path):
     h = hashlib.sha256()
     with Path(path).open("rb") as f:
@@ -199,7 +205,7 @@ def _analyze(args, audio, model, out, ffmpeg, whisper_cli, native):
                 args.language,
                 "-t",
                 str(args.threads),
-                "-ojf",
+                "-oj",
                 "-of",
                 "whisper" if native["cwd"] else str(out / "whisper"),
                 "-np",
@@ -208,9 +214,22 @@ def _analyze(args, audio, model, out, ffmpeg, whisper_cli, native):
             stderr=log,
             cwd=native["cwd"], check=True, timeout=21600,
         )
-    raw = json.loads((out / "whisper.json").read_text(encoding="utf-8"))
+    # Segment JSON avoids unused byte-level token fragments. If malformed
+    # UTF-8 remains, preserve available text but make the replacement visible.
+    engine_bytes = (out / "whisper.json").read_bytes()
+    replaced_utf8 = False
+    try:
+        engine_text = engine_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        engine_text = engine_bytes.decode("utf-8", errors="replace")
+        replaced_utf8 = True
+    raw = json.loads(engine_text)
+    if not isinstance(raw, dict) or not isinstance(raw.get("transcription"), list):
+        raise ValueError("invalid_whisper_output")
+    if replaced_utf8:
+        report("Whisper output contained invalid UTF-8; replacement characters may appear", force=True)
     segments = []
-    for index, row in enumerate(raw.get("transcription", [])):
+    for index, row in enumerate(raw["transcription"]):
         left = float(row["offsets"]["from"]) / 1000
         right = float(row["offsets"]["to"]) / 1000
         if (
@@ -314,6 +333,8 @@ def _analyze(args, audio, model, out, ffmpeg, whisper_cli, native):
             "Timestamps are model estimates.",
         ],
     }
+    if replaced_utf8:
+        result["notes"].append(_UTF8_REPLACEMENT_NOTE)
     (out / "result.json").write_text(
         json.dumps(result, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
@@ -326,6 +347,8 @@ def _analyze(args, audio, model, out, ffmpeg, whisper_cli, native):
         "Derived result. Original phone records are unchanged. Speaker labels apply only within this asset.",
         "",
     ]
+    if replaced_utf8:
+        lines.extend([f"Warning: {_UTF8_REPLACEMENT_NOTE}", ""])
     for row in segments:
         stamp = f"{int(row['start'] // 60):02d}:{row['start'] % 60:05.2f}"
         speaker = f"{row['speaker']}：" if args.diarize else ""
