@@ -242,9 +242,13 @@ def request(destination, password, payload, timeout=10, resolved=None):
             sent = False
             try:
                 # Reserve time for other addresses if an advertised interface is
-                # down, and for a new lookup if a remembered address has moved.
+                # down. Remembered addresses share at most half the time left:
+                # one that has moved may never answer, and the other half must
+                # remain for discovering the phone again.
                 budget = _remaining(deadline)
-                if candidates is remembered or index + 1 < len(candidates):
+                if candidates is remembered:
+                    budget = min(2, budget / 2 / (len(candidates) - index))
+                elif index + 1 < len(candidates):
                     budget = min(2, budget / (len(candidates) - index))
                 raw.settimeout(budget)
                 raw.connect(address)

@@ -228,16 +228,26 @@ class WindowsPSKTests(unittest.TestCase):
 
     def test_session_finds_the_phone_again_after_its_address_changes(self):
         password, resolved = generated_password(), {}
-        with PythonPeer(password) as first:
-            old = [(socket.AF_INET, ("127.0.0.1", first.port))]
-            with mock.patch.object(link, "endpoint_candidates", return_value=old):
-                link.request({"service": "synthetic"}, password, {"op": "status"}, 2, resolved)
+        # The old address accepts TCP and then never answers, on every OS. A
+        # closed port is refused at once on macOS but only after about two
+        # seconds of retries on Windows, which once used up the whole deadline.
+        silent = socket.socket()
+        silent.bind(("127.0.0.1", 0))
+        silent.listen(1)
+        self.addCleanup(silent.close)
+        old = [(socket.AF_INET, silent.getsockname())]
         with PythonPeer(password) as second:
             new = [(socket.AF_INET, ("127.0.0.1", second.port))]
+            with mock.patch.object(link, "endpoint_candidates", return_value=new):
+                link.request({"service": "synthetic"}, password, {"op": "status"}, 2, resolved)
+            key = next(iter(resolved))
+            resolved[key] = old
+            started = time.monotonic()
             with mock.patch.object(link, "endpoint_candidates", return_value=new) as lookup:
                 self.assertTrue(link.request({"service": "synthetic"}, password, {"op": "status"}, 2, resolved)["ok"])
+            self.assertLess(time.monotonic() - started, 1.9)
             self.assertEqual(lookup.call_count, 1)
-            self.assertEqual(list(resolved.values()), [new])
+            self.assertEqual(resolved, {key: new})
         with mock.patch.object(link, "endpoint_candidates", return_value=new):
             with self.assertRaises(link.LinkError):
                 link.request({"service": "synthetic"}, password, {"op": "status"}, 1, resolved)
