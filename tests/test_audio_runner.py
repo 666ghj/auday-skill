@@ -67,6 +67,32 @@ class AudioRunnerTests(unittest.TestCase):
         self.progress = progress_stream.getvalue()
         return json.loads(stream.getvalue()), processes
 
+    def execute_engine_json(self, body, *, windows=False):
+        def process(command, **kwargs):
+            if command[0] != "whisper-cli":
+                return self.synthetic_process(command, **kwargs)
+            self.assertIn("-oj", command)
+            self.assertNotIn("-ojf", command)
+            prefix = command[command.index("-of") + 1]
+            path = Path(kwargs["cwd"]) / prefix if kwargs.get("cwd") else Path(prefix)
+            path.with_suffix(".json").write_bytes(body)
+
+        stream, progress = io.StringIO(), io.StringIO()
+        code = 0
+        with patch.object(sys, "argv", self.arguments + ["--no-diarize"]), \
+                patch.object(refine_audio.shutil, "which", return_value="/synthetic/tool"), \
+                patch.object(refine_audio.subprocess, "run", side_effect=process), \
+                patch.object(refine_audio, "is_windows", return_value=windows), \
+                patch.dict(os.environ, {"AUDAY_PROGRESS": "1"}), \
+                contextlib.redirect_stdout(stream), contextlib.redirect_stderr(progress):
+            try:
+                refine_audio.main()
+            except SystemExit as error:
+                code = error.code
+        self.progress = progress.getvalue()
+        self.assertEqual((self.output / "whisper.json").read_bytes(), body)
+        return code, json.loads(stream.getvalue())
+
     def test_default_runs_diarization_and_preserves_source(self):
         source = self.audio.read_bytes()
         turns = [
@@ -143,17 +169,94 @@ class AudioRunnerTests(unittest.TestCase):
             ]}, ensure_ascii=False).encode("utf-8")
             # A lone lead byte of a three-byte character, as a split token emits.
             path.with_suffix(".json").write_bytes(body.replace(b"FRAGMENT", b"\xe3\x81"))
-        stream = io.StringIO()
+        stream, progress = io.StringIO(), io.StringIO()
         with patch.object(sys, "argv", self.arguments + ["--no-diarize"]), \
                 patch.object(refine_audio.shutil, "which", return_value="/synthetic/tool"), \
                 patch.object(refine_audio.subprocess, "run", side_effect=process), \
                 patch.dict(sys.modules, {"sherpa_onnx": None, "soundfile": None}), \
-                contextlib.redirect_stdout(stream), contextlib.redirect_stderr(io.StringIO()):
+                patch.dict(os.environ, {"AUDAY_PROGRESS": "1"}), \
+                contextlib.redirect_stdout(stream), contextlib.redirect_stderr(progress):
             refine_audio.main()
         self.assertTrue(json.loads(stream.getvalue())["ok"])
         result = json.loads((self.output / "result.json").read_text(encoding="utf-8"))
         self.assertEqual(result["segments"][0]["text"], "こんにちは")
-        self.assertIn("こんにちは", (self.output / "transcript.md").read_text(encoding="utf-8"))
+        self.assertEqual(result["segments"][1]["text"], "\ufffd")
+        self.assertTrue(any("invalid UTF-8" in note for note in result["notes"]))
+        transcript = (self.output / "transcript.md").read_text(encoding="utf-8")
+        self.assertIn("こんにちは", transcript)
+        self.assertIn("invalid UTF-8", transcript)
+        self.assertIn("invalid UTF-8", progress.getvalue())
+        self.assertNotIn("こんにちは", progress.getvalue())
+
+    def test_split_token_bytes_preserve_complete_cjk_segments_and_timing(self):
+        texts = ["今日は晴れです。", "今天讨论项目。 한국어도 보존합니다."]
+        raw = json.dumps({"transcription": [
+            {"offsets": {"from": 0, "to": 1000}, "text": texts[0],
+             "tokens": [{"text": "TOKEN_LEAD"}, {"text": "TOKEN_TAIL"}]},
+            {"offsets": {"from": 1000, "to": 2000}, "text": texts[1]},
+        ]}, ensure_ascii=False).encode("utf-8")
+        raw = raw.replace(b"TOKEN_LEAD", b"\xe3").replace(b"TOKEN_TAIL", b"\x81\x93")
+        original = self.audio.read_bytes()
+        for windows in (False, True):
+            with self.subTest(windows=windows):
+                self.output = self.root / ("windows-token-output" if windows else "mac-token-output")
+                self.arguments[-1] = str(self.output)
+                code, reply = self.execute_engine_json(raw, windows=windows)
+                self.assertEqual(code, 0)
+                self.assertTrue(reply["ok"])
+                result = json.loads((self.output / "result.json").read_text(encoding="utf-8"))
+                self.assertEqual([row["text"] for row in result["segments"]], texts)
+                self.assertEqual([(row["start"], row["end"]) for row in result["segments"]], [(0, 1), (1, 2)])
+                self.assertTrue(any("invalid UTF-8" in note for note in result["notes"]))
+                self.assertEqual(self.audio.read_bytes(), original)
+                self.assertNotIn(str(self.root), self.progress)
+                self.assertTrue(all(text not in self.progress for text in texts))
+
+    def test_valid_utf8_cjk_and_literal_replacement_character_do_not_warn(self):
+        texts = ["中文、日本語、한국어。", "The literal replacement character is \ufffd."]
+        raw = json.dumps({"transcription": [
+            {"offsets": {"from": index * 1000, "to": (index + 1) * 1000}, "text": text}
+            for index, text in enumerate(texts)
+        ]}, ensure_ascii=False).encode("utf-8")
+        code, reply = self.execute_engine_json(raw)
+        self.assertEqual(code, 0)
+        self.assertTrue(reply["ok"])
+        result = json.loads((self.output / "result.json").read_text(encoding="utf-8"))
+        self.assertEqual(result["schemaVersion"], 1)
+        self.assertEqual([row["text"] for row in result["segments"]], texts)
+        self.assertFalse(any("invalid UTF-8" in note for note in result["notes"]))
+        self.assertNotIn("invalid UTF-8", (self.output / "transcript.md").read_text(encoding="utf-8"))
+        self.assertNotIn("invalid UTF-8", self.progress)
+
+    def test_corrupt_or_missing_transcription_structure_cannot_succeed_as_empty(self):
+        bodies = [
+            b'{"transcrip\xe3\x81tion": []}',
+            b'{}',
+            b'[]',
+            b'{"transcription": null}',
+            b'{"transcription": {}}',
+            b'{"transcription": ""}',
+            b'{"transcription": false}',
+            b'{"transcription": [{',
+        ]
+        for index, raw in enumerate(bodies):
+            with self.subTest(body=raw):
+                self.output = self.root / f"invalid-engine-{index}"
+                self.arguments[-1] = str(self.output)
+                code, reply = self.execute_engine_json(raw)
+                self.assertEqual(code, 1)
+                self.assertFalse(reply["ok"])
+                self.assertFalse((self.output / "result.json").exists())
+                self.assertFalse((self.output / "transcript.md").exists())
+
+    def test_valid_empty_transcription_remains_a_successful_empty_result(self):
+        code, reply = self.execute_engine_json(b'{"transcription": []}')
+        self.assertEqual(code, 0)
+        self.assertTrue(reply["ok"])
+        self.assertEqual(reply["segments"], 0)
+        result = json.loads((self.output / "result.json").read_text(encoding="utf-8"))
+        self.assertEqual(result["segments"], [])
+        self.assertFalse(any("invalid UTF-8" in note for note in result["notes"]))
 
     def test_default_missing_models_stops_before_transcription(self):
         stream = io.StringIO()
