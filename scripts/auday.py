@@ -8,6 +8,7 @@ import json
 import math
 import os
 from pathlib import Path
+import queue
 import re
 import shutil
 import shlex
@@ -17,16 +18,29 @@ import sys
 import threading
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from datetime import datetime, timezone
-from progress import report
+from progress import muted, report
 from platform_utils import default_home, is_windows, lock_file, unlock_file, secure_directory
 from incremental_sync import body_hash, body_json, fetch_records
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_HOME = default_home()
+AUDIO_CHUNK_BYTES = 262144
+# Accepted by a phone advertising `largeAudioChunks`. As Base64 it still fits
+# one 2 MiB frame.
+LARGE_AUDIO_CHUNK_BYTES = 1048576
+# A batch records these against one asset and continues with the next. Any
+# other failure concerns the connection or the snapshot and ends the batch.
+ASSET_FAILURES = frozenset((
+    "asset_not_in_synced_snapshot", "asset_not_found", "audio_unavailable", "audio_changed",
+    "audio_preparation_busy", "audio_hash_mismatch", "audio_chunk_integrity_failed",
+    "invalid_prepared_audio", "invalid_prepared_audio_timeline", "invalid_asset_metadata",
+    "partial_size_invalid", "request_failed",
+))
 _profile_locks = {}
 _profile_locks_guard = threading.Lock()
+_link_binary = None
 
 
 class ProfileOperationLock:
@@ -132,6 +146,61 @@ def valid_lease_token(token):
         return False
 
 
+class LinkSession:
+    """One link process answers a command's sequential phone requests.
+
+    A recording is transferred as many small requests. Starting the link for
+    each one repeated its start-up, the saved-secret lookup and, on Windows,
+    phone discovery; that fixed cost exceeded the transfer itself.
+    """
+
+    def __init__(self, command):
+        self.process = subprocess.Popen(
+            command + ["session"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL, text=True, encoding="utf-8",
+        )
+        self.replies = queue.Queue()
+        self.turn = threading.Lock()
+        self.reader = threading.Thread(target=self._read, daemon=True)
+        self.reader.start()
+
+    def _read(self):
+        try:
+            for line in self.process.stdout:
+                self.replies.put(line)
+        except (OSError, ValueError):
+            pass
+        self.replies.put(None)
+
+    def request(self, config, timeout):
+        """Return the reply line, or None once the process cannot answer."""
+        # Replies carry no identifier: one request is outstanding at a time.
+        with self.turn:
+            try:
+                self.process.stdin.write(json.dumps(config) + "\n")
+                self.process.stdin.flush()
+            except (OSError, ValueError):
+                return None
+            try:
+                return self.replies.get(timeout=timeout)
+            except queue.Empty:
+                raise subprocess.TimeoutExpired(self.process.args, timeout) from None
+
+    def close(self, wait=1):
+        """End an idle session at end of input; `wait=0` stops a busy one."""
+        try:
+            self.process.stdin.close()
+        except OSError:
+            pass
+        try:
+            self.process.wait(timeout=wait)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            self.process.wait()
+        self.reader.join(timeout=1)
+        self.process.stdout.close()
+
+
 class Auday:
     def __init__(self, home=DEFAULT_HOME, profile="default", transport=None):
         if not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", profile):
@@ -141,6 +210,8 @@ class Auday:
         self.operation_lock = profile_operation_lock(self.root)
         self.profile = profile
         self.transport = transport
+        self.link = None
+        self.small_audio_chunks = False
         self.snapshot_lease = None
         self.keychain_account = (
             "profile-" + hashlib.sha256(str(self.root).encode()).hexdigest()[:32]
@@ -157,7 +228,13 @@ class Auday:
         """)
 
     def close(self):
+        self.close_link()
         self.db.close()
+
+    def close_link(self, wait=1):
+        if self.link is not None:
+            self.link.close(wait)
+            self.link = None
 
     def metadata(self):
         return {
@@ -184,17 +261,18 @@ class Auday:
         else:
             config = self.config()
             config.update(profile=self.keychain_account, request=payload, timeout=max(1, timeout - 5))
-            process = subprocess.run(
-                bridge_command() + ["request"],
-                input=json.dumps(config) + "\n",
-                text=True,
-                capture_output=True,
-                encoding="utf-8",
-                timeout=timeout,
-            )
+            if self.link is None:
+                self.link = LinkSession(bridge_command())
             try:
-                result = json.loads(process.stdout)
-            except ValueError:
+                reply = self.link.request(config, timeout)
+            except subprocess.TimeoutExpired:
+                # Its late answer must not be read as the next request's reply.
+                self.close_link(wait=0)
+                raise
+            try:
+                result = json.loads(reply)
+            except (ValueError, TypeError):
+                self.close_link(wait=0)
                 raise ValueError("connection_failed") from None
         if not isinstance(result, dict):
             raise ValueError("invalid_response_object")
@@ -833,12 +911,70 @@ class Auday:
         with self.operation_lock:
             return self._audio(identity)
 
-    def _audio(self, identity):
-        metadata = self.metadata()
+    def audio_batch(self, identities=None):
+        """Fetch several assets in one operation; None means the whole catalogue.
+
+        One lock, link session and snapshot lease serve every asset. Verified
+        cached files need no phone, so repeating an interrupted batch resumes it.
+        A failure of one asset is recorded and the batch continues; a connection
+        or snapshot failure ends it with the remaining count.
+        """
+        with self.operation_lock, ExitStack() as lease:
+            started = time.perf_counter()
+            # An empty text-only catalogue is a refused scope, not a finished batch.
+            self.audio_scope(self.metadata())
+            listed = identities is not None
+            if listed:
+                identities = list(dict.fromkeys(identities))
+            else:
+                identities = [row[0] for row in self.db.execute("SELECT id FROM assets ORDER BY id")]
+            assets, failed, stopped = [], [], None
+            downloaded = cached = transferred = 0
+            for index, identity in enumerate(identities):
+                report("Fetching audio assets", index, len(identities), "assets")
+                try:
+                    with muted():
+                        result = self._audio(identity, lease)
+                except (ValueError, KeyError, OSError, RuntimeError, sqlite3.Error,
+                        subprocess.SubprocessError) as error:
+                    message = str(error) if isinstance(error, ValueError) else type(error).__name__
+                    if message.split(":", 1)[0] not in ASSET_FAILURES:
+                        stopped = message
+                        break
+                    failed.append({"id": identity, "error": message})
+                    continue
+                if result["cacheHit"]:
+                    cached += 1
+                else:
+                    downloaded += 1
+                    transferred += result["transferredBytes"]
+                assets.append({"id": identity, "path": result["path"], "cacheHit": result["cacheHit"]})
+            finished = downloaded + cached + len(failed)
+            report("Fetching audio assets", finished, len(identities), "assets", force=True)
+            summary = {
+                "requested": len(identities), "downloaded": downloaded, "cached": cached,
+                "failed": failed, "stopped": stopped, "remaining": len(identities) - finished,
+                "complete": stopped is None and not failed,
+                "bytesDownloaded": transferred,
+                "seconds": round(time.perf_counter() - started, 3),
+                "directory": str(self.root / "audio"),
+            }
+            if listed:
+                # A whole catalogue can be hundreds of paths; each saved file's
+                # adjacent .asset.json already identifies it.
+                summary["assets"] = assets
+            return summary
+
+    @staticmethod
+    def audio_scope(metadata):
         if metadata.get("access") == "text-only-read-only":
             raise ValueError(
                 "audio_access_denied: enable text and audio on the phone, then sync"
             )
+
+    def _audio(self, identity, lease=None):
+        metadata = self.metadata()
+        self.audio_scope(metadata)
         row = self.db.execute(
             "SELECT body FROM assets WHERE id=?", (identity,)
         ).fetchone()
@@ -862,12 +998,18 @@ class Auday:
             if cached.is_file() and sha(cached) == saved_hash:
                 report("Using verified cached audio", force=True)
                 return {"path": str(cached), "asset": asset, "cacheHit": True}
-        with self.snapshot_access(snapshot, metadata.get("capabilities", {}), prepare_if_needed=True):
+        with ExitStack() as own:
+            # A batch keeps the lease of its first download until its last.
+            (own if lease is None else lease).enter_context(
+                self.snapshot_access(snapshot, metadata.get("capabilities", {}), prepare_if_needed=True)
+            )
             return self._download_audio(identity, asset, snapshot, asset_suffix, suffixes)
 
     def _download_audio(self, identity, asset, snapshot, asset_suffix, suffixes):
+        started = time.perf_counter()
         if asset.get("preparation") == "on-demand":
             asset = self.prepare_audio(asset, snapshot=snapshot)
+        prepared = time.perf_counter()
         expected = asset["sha256"]
         size = asset["size"]
         if (
@@ -888,31 +1030,52 @@ class Auday:
         if offset > size:
             raise ValueError("partial_size_invalid")
         preparation_retried = False
+        resumed, requests = offset, 0
+        capabilities = self.metadata().get("capabilities")
+        large = (
+            not self.small_audio_chunks and isinstance(capabilities, dict)
+            and capabilities.get("largeAudioChunks") is True
+        )
+        chunk = LARGE_AUDIO_CHUNK_BYTES if large else AUDIO_CHUNK_BYTES
         report("Downloading audio", offset, size, "bytes", force=True)
         with temporary.open("ab") as out:
             os.chmod(temporary, 0o600)
             while offset < size:
+                length = min(chunk, size - offset)
                 request = {
                     "op": "audio", "id": identity, "offset": offset,
-                    "length": min(262144, size - offset), "snapshot": snapshot,
+                    "length": length, "snapshot": snapshot,
                 }
+                requests += 1
                 try:
                     reply = self.request(request)
                 except ValueError as error:
-                    if str(error) != "audio_not_prepared" or preparation_retried or asset.get("preparation") != "on-demand":
+                    code = str(error)
+                    if length > AUDIO_CHUNK_BYTES and code in (
+                        "invalid_range", "awaiting_phone_or_wrong_password",
+                        "authentication_or_connection_failed",
+                    ):
+                        # The phone no longer accepts the size it advertised at
+                        # the last sync, or the link could not carry the larger
+                        # frame in time. The original size worked on both.
+                        chunk = AUDIO_CHUNK_BYTES
+                        if code == "invalid_range":
+                            self.small_audio_chunks = True
+                        continue
+                    if code != "audio_not_prepared" or preparation_retried or asset.get("preparation") != "on-demand":
                         raise
                     preparation_retried = True
                     refreshed = self.prepare_audio(asset, snapshot=snapshot)
                     if refreshed["sha256"] != expected or refreshed["size"] != size:
                         raise ValueError("audio_changed: sync again before retrying") from None
-                    reply = self.request(request)
+                    continue
                 data = base64.b64decode(reply["data"], validate=True)
                 if (
                     reply.get("snapshot") != snapshot
                     or reply["offset"] != offset
                     or reply["sha256"] != expected
                     or reply["size"] != size
-                    or len(data) != min(262144, size - offset)
+                    or len(data) != length
                     or hashlib.sha256(data).hexdigest() != reply["chunkSHA256"]
                 ):
                     raise ValueError("audio_chunk_integrity_failed")
@@ -921,6 +1084,7 @@ class Auday:
                 os.fsync(out.fileno())
                 offset += len(data)
                 report("Downloading audio", offset, size, "bytes")
+        transferred = time.perf_counter()
         report("Verifying downloaded audio")
         if sha(temporary) != expected:
             # Retain evidence without retrying a corrupt partial forever.
@@ -935,20 +1099,52 @@ class Auday:
         temporary.replace(target)
         atomic_json(target.with_suffix(".asset.json"), asset)
         report("Audio saved and verified")
-        return {"path": str(target), "asset": asset, "cacheHit": False}
+        return {
+            "path": str(target), "asset": asset, "cacheHit": False,
+            "timings": {
+                "prepareSeconds": round(prepared - started, 3),
+                "transferSeconds": round(transferred - prepared, 3),
+                "verifySeconds": round(time.perf_counter() - transferred, 3),
+            },
+            "transferRequests": requests,
+            "transferredBytes": size - resumed,
+        }
 
 
 def bridge():
+    """Return the macOS link program, building it when its sources changed.
+
+    Asking SwiftPM where the program is takes about half a second, and this used
+    to run before every phone request: forty times for a 10 MB recording. A
+    record of the sources the present build came from answers without SwiftPM.
+    """
+    global _link_binary
+    if _link_binary is not None:
+        return _link_binary
     if sys.platform != "darwin":
         raise ValueError("macOS_required_for_live_connection")
-    if not shutil.which("swift"):
-        raise ValueError("swift_missing: install Xcode Command Line Tools")
     package = HERE / "link"
     build = package / ".build"
     build.mkdir(exist_ok=True)
     # Multiple agent processes can request data simultaneously; serialize compilation.
     with (build / "auday-build.lock").open("a+b") as lock:
         lock_file(lock)
+        digest = hashlib.sha256()
+        for path in sorted([package / "Package.swift", *package.glob("Sources/**/*.swift")]):
+            digest.update(path.relative_to(package).as_posix().encode() + b"\0")
+            digest.update(hashlib.sha256(path.read_bytes()).digest())
+        built = {"sources": digest.hexdigest()}
+        record = build / "auday-link.json"
+        try:
+            saved = json.loads(record.read_text(encoding="utf-8"))
+            binary = build / saved["binary"]
+            if saved["sources"] == built["sources"] and binary.is_file():
+                _link_binary = binary
+                return binary
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+        if not shutil.which("swift"):
+            raise ValueError("swift_missing: install Xcode Command Line Tools")
         output = subprocess.run(
             ["swift", "build", "--package-path", str(package), "--show-bin-path"],
             text=True,
@@ -956,16 +1152,17 @@ def bridge():
             check=True,
         )
         binary = Path(output.stdout.strip()) / "auday-link"
-        sources = [package / "Package.swift", *package.glob("Sources/**/*.swift")]
-        if (
-            not binary.exists()
-            or max(p.stat().st_mtime for p in sources) > binary.stat().st_mtime
-        ):
-            subprocess.run(
-                ["swift", "build", "--package-path", str(package)],
-                stdout=sys.stderr,
-                check=True,
-            )
+        subprocess.run(
+            ["swift", "build", "--package-path", str(package)],
+            stdout=sys.stderr,
+            check=True,
+        )
+        try:
+            built["binary"] = binary.relative_to(build).as_posix()
+            atomic_json(record, built)
+        except (ValueError, OSError):
+            pass  # Without the record SwiftPM is asked again by the next command.
+        _link_binary = binary
         return binary
 
 
@@ -1016,8 +1213,9 @@ def main():
     assets.add_argument("--offset", type=int, default=0)
     read = commands.add_parser("read")
     read.add_argument("id")
-    audio = commands.add_parser("audio")
-    audio.add_argument("id")
+    audio = commands.add_parser("audio", help="Fetch verified audio; several IDs or --all share one connection session")
+    audio.add_argument("id", nargs="*")
+    audio.add_argument("--all", action="store_true", help="Fetch every asset of the synchronized catalogue")
     export = commands.add_parser("export", help="Export cached text as readable daily Markdown files")
     export.add_argument("--output", type=Path, required=True)
     export.add_argument("--language", choices=["en", "zh-CN"], default="en")
@@ -1192,7 +1390,15 @@ def main():
         elif args.command == "read":
             dump(app.read(args.id))
         elif args.command == "audio":
-            dump(app.audio(args.id))
+            if bool(args.id) == args.all:
+                raise ValueError("audio_requires_asset_ids_or_all")
+            if len(args.id) == 1:
+                dump(app.audio(args.id[0]))
+            else:
+                result = app.audio_batch(None if args.all else args.id)
+                dump(result)
+                if not result["complete"]:
+                    sys.exit(1)
     finally:
         app.close()
 

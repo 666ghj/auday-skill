@@ -51,6 +51,8 @@ The secret is shared by authorized clients. This version does not provide per-co
 <auday> read <record-id>
 <auday> assets --limit 20
 <auday> audio <asset-id>
+<auday> audio <asset-id> <asset-id> ...
+<auday> audio --all
 ```
 
 `--home` and `--profile` are global options placed before the command, with `--home` first when both are provided. Use separate profiles for separate phones. Passwords are never command arguments. Existing integrations with an appropriate Python runtime may still invoke `auday.py` directly.
@@ -80,7 +82,9 @@ If an existing semantic index is configured, run `<auday> index` once after the 
 
 Operations that change the same local profile—sync, audio preparation, and audio download—wait for one another. Other profiles and cached reads remain available. A compatible phone also keeps the selected snapshot available under a temporary lease throughout a transfer, so another computer's update does not switch the content halfway through. Leases are released on success or failure; they do not make phone access permanent.
 
-`audio` resumes partial downloads, verifies every chunk and the final SHA-256, and returns a local file path plus asset metadata. The adjacent `.asset.json` preserves provenance and timeline mappings. Audio metadata does not imply that the audio is downloaded.
+`audio` resumes partial downloads, verifies every chunk and the final SHA-256, and returns a local file path plus asset metadata. The adjacent `.asset.json` preserves provenance and timeline mappings. Audio metadata does not imply that the audio is downloaded. A downloaded result also carries `timings` (`prepareSeconds` for the phone's preparation, `transferSeconds`, `verifySeconds`) and `transferRequests`; include them, with the software versions, when reporting a slow download.
+
+When a task needs several recordings, give all of their IDs to one `audio` command, or use `audio --all` for the whole synchronized catalogue, instead of running one command per recording. One command shares a connection session and a snapshot lease and prints one summary: `requested`, `downloaded`, `cached`, `failed`, `stopped`, `remaining`, and `complete`. An asset-level error such as `audio_unavailable` is listed under `failed` and the batch continues; a connection or snapshot failure sets `stopped` and ends it. Repeat the same command to resume: verified files are reused without the phone, and a partial file continues from its saved size. Explicit IDs also return each `path`. `--all` omits paths; each saved file's `.asset.json` identifies it, and a later `audio <asset-id>` returns the cached path offline. The command exits non-zero unless the batch is `complete`. Fetch the whole catalogue only at the user's request; it may be many gigabytes.
 
 With a compatible phone, the audio catalogue is lightweight: the `audio` command prepares only the requested recording before downloading it. It keeps one snapshot identity for preparation and every chunk. Verified downloaded files can be reused offline without contacting the phone. Allow bounded preparation to finish rather than fetching every asset to test a connection. Do not treat a recent `syncedAt` as proof that the source is current.
 

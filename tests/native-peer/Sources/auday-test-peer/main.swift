@@ -16,7 +16,8 @@ do {
           let root = input["root"] as? String else { throw LinkError.message("invalid_fixture_request") }
     let scopeName = input["access"] as? String ?? AccessScope.textAndAudio.rawValue
     guard let scope = AccessScope(rawValue: scopeName) else { throw LinkError.message("invalid_fixture_scope") }
-    let library = try Library(root: URL(fileURLWithPath: root), scope: scope)
+    let library = try Library(root: URL(fileURLWithPath: root), scope: scope,
+                              largeAudioChunks: input["largeAudioChunks"] as? Bool ?? false)
     let peer = LinkServer(); retainedPeer = peer
     try peer.start(library: library, password: password) { result in
         switch result {

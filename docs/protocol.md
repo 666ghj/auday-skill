@@ -22,6 +22,8 @@ Each TLS connection carries one request and one response. A frame is a four-byte
 
 The receiver accumulates stream fragments until the declared frame length is complete; a receive callback is not assumed to correspond to a whole frame. The sender marks its response as the final message and drains the connection until the peer closes or the bounded drain timeout expires. `contentProcessed` is not treated as proof of remote delivery. Skill 0.3.1 includes this stream-handling correction; native TLS regression tests include a complete 1.5 MB inline response.
 
+How a client schedules its requests does not change this protocol. Within one command the desktop client keeps a single link process for all of its sequential requests (`session`: one JSON request line in, one reply line out). That process reads the saved secret once and, on Windows, tries the address that last answered before repeating service discovery. Every request still makes its own authenticated connection, and nothing is resent after partial delivery. On macOS the client records which sources its link program was built from, so it asks the package manager only when they change. Earlier clients repeated all of this for every request, which for a recording meant once per 256 KiB.
+
 Successful replies include `ok`, `schemaVersion: 1`, `snapshot`, and `sourceDeviceID`. For an on-demand companion, control-plane status uses `null` for the snapshot and counts until preparation succeeds; this never means an empty archive. Client diagnostic output also includes the negotiated TLS version and cipher.
 
 | `op` | Request fields | Result |
@@ -39,7 +41,7 @@ Successful replies include `ok`, `schemaVersion: 1`, `snapshot`, and `sourceDevi
 | `prepareAudio` | `id`, `snapshot` | Prepare one permitted on-demand asset and return its size, hash, format, and timeline |
 | `audio` | `id`, `offset`, `length`, `snapshot` | Base64 chunk, offset, total size, full hash, and chunk hash |
 
-Audio chunks are at most 256 KiB. Unknown operations, including mutation requests, are rejected. Errors use `ok: false` and a bounded error identifier. The server accepts asset IDs, never arbitrary filesystem paths.
+Audio chunks are at most 256 KiB. A phone advertising `capabilities.largeAudioChunks: true` accepts an `audio` `length` of up to 1 MiB (1,048,576 bytes), which as Base64 still fits one frame; every capability remains a boolean. The client keeps 256 KiB with any phone that does not advertise it, and a request without `length` still returns at most 256 KiB. Capabilities are those saved by the last sync: if the phone rejects the larger size (`invalid_range`), or a larger frame does not arrive in time, the client continues the file with 256 KiB chunks. Record chunks remain 256 KiB. Unknown operations, including mutation requests, are rejected. Errors use `ok: false` and a bounded error identifier. The server accepts asset IDs, never arbitrary filesystem paths.
 
 When `capabilities.snapshotLeases` is true, snapshot data operations (`list`,
 `assets`, `read`, `recordManifest`, `readRecords`, `recordChunk`, `prepareAudio`, and `audio`) also accept the
