@@ -1,5 +1,6 @@
 """Privacy-safe progress on stderr; stdout remains available for JSON results."""
 
+from contextlib import contextmanager
 import os
 import sys
 from time import monotonic
@@ -7,6 +8,21 @@ from time import monotonic
 _last_stage = None
 _last_emitted_at = 0.0
 _MIN_INTERVAL_SECONDS = 1.0
+_muted = 0
+
+
+@contextmanager
+def muted():
+    """Silence each item's own stages while a caller reports the overall count.
+
+    A batch of hundreds of assets would otherwise print several lines for each.
+    """
+    global _muted
+    _muted += 1
+    try:
+        yield
+    finally:
+        _muted -= 1
 
 
 def report(stage, completed=None, total=None, unit=None, force=False):
@@ -18,7 +34,7 @@ def report(stage, completed=None, total=None, unit=None, force=False):
     measured completion are always emitted. AUDAY_PROGRESS=0 disables output.
     """
     global _last_stage, _last_emitted_at
-    if os.environ.get("AUDAY_PROGRESS") == "0":
+    if _muted or os.environ.get("AUDAY_PROGRESS") == "0":
         return
     counts = (
         type(completed) is int

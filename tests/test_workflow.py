@@ -12,6 +12,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -46,11 +47,12 @@ def make_library(root):
 
 
 @contextmanager
-def fixture_peer(root, password, access="text-and-audio-read-only", native_binary=None):
+def fixture_peer(root, password, access="text-and-audio-read-only", native_binary=None,
+                 large_audio_chunks=False):
     if PYTHON_PEER:
         from fixture_library import FixtureLibrary
         from python_peer import PythonPeer
-        library = FixtureLibrary(root, access=access)
+        library = FixtureLibrary(root, access=access, large_audio_chunks=large_audio_chunks)
         with PythonPeer(password, response=library.respond) as server:
             yield server.port
         return
@@ -69,7 +71,9 @@ def fixture_peer(root, password, access="text-and-audio-read-only", native_binar
 
     reader = threading.Thread(target=read_ready, daemon=True)
     try:
-        process.stdin.write(json.dumps({"password": password, "root": str(root), "access": access}) + "\n")
+        process.stdin.write(json.dumps({
+            "password": password, "root": str(root), "access": access, "largeAudioChunks": large_audio_chunks,
+        }) + "\n")
         process.stdin.flush()
         reader.start()
         try:
@@ -199,6 +203,83 @@ class WorkflowTests(unittest.TestCase):
             self.assertIn("serve", result.stderr)
         else:
             self.assertEqual(json.loads(result.stdout)["error"], "unsupported_client_command")
+
+    def production_client(self):
+        """A client on the path users run: no injected transport."""
+        home = tempfile.TemporaryDirectory(prefix="auday-production-")
+        self.addCleanup(home.cleanup)
+        app = Auday(home.name)
+        self.addCleanup(app.close)
+        if PYTHON_PEER and sys.platform != "win32":
+            command = mock.patch.object(auday, "bridge_command", return_value=list(self.command))
+            command.start()
+            self.addCleanup(command.stop)
+        # The synthetic secret reaches the link through stdin, as in raw_request.
+        (app.root / "connection.json").write_text(json.dumps(
+            {"host": "127.0.0.1", "port": self.port, "password": self.password}
+        ), encoding="utf-8")
+        return app
+
+    def test_one_link_process_serves_a_whole_sync_and_download(self):
+        # Injected transports hide what each real request costs: this path once
+        # queried SwiftPM and started a link process for every 256 KiB chunk.
+        app = self.production_client()
+        with mock.patch.object(subprocess, "run", wraps=subprocess.run) as run, \
+                mock.patch.object(subprocess, "Popen", wraps=subprocess.Popen) as started:
+            app.sync()
+            result = app.audio("audio-demo")
+            self.assertTrue(app.request({"op": "status"})["ok"])
+        self.assertEqual(sha(result["path"]), self.library["assets"][0]["sha256"])
+        self.assertGreater(result["transferRequests"], 1)
+        self.assertEqual(started.call_count, 1)
+        run.assert_not_called()
+
+    @unittest.skipIf(PYTHON_PEER, "The Swift link is built on macOS only")
+    def test_link_build_is_located_without_swiftpm_until_its_sources_change(self):
+        binary = auday.bridge()
+        record = auday.HERE / "link" / ".build" / "auday-link.json"
+        current = json.loads(record.read_text(encoding="utf-8"))
+        with mock.patch.object(auday, "_link_binary", None), \
+                mock.patch.object(subprocess, "run", wraps=subprocess.run) as run:
+            self.assertTrue(auday.bridge().samefile(binary))
+            run.assert_not_called()
+        # A record of other sources stands for a build that is no longer current.
+        record.write_text(json.dumps({**current, "sources": "0" * 64}), encoding="utf-8")
+        with mock.patch.object(auday, "_link_binary", None), \
+                mock.patch.object(subprocess, "run", wraps=subprocess.run) as run:
+            self.assertTrue(auday.bridge().samefile(binary))
+            self.assertEqual([call.args[0][:2] for call in run.call_args_list], [["swift", "build"]] * 2)
+        self.assertEqual(json.loads(record.read_text(encoding="utf-8")), current)
+
+    def test_link_session_answers_each_line_and_outlives_a_failed_request(self):
+        def line(request, timeout=2):
+            return json.dumps({"host": "127.0.0.1", "port": self.port, "password": self.password,
+                               "request": request, "timeout": timeout}) + "\n"
+
+        result = subprocess.run(
+            [*self.command, "session"],
+            input=line({"op": "status"}) + line({"op": "delete", "id": "memory-1"}) + "[]\n"
+            + line({"op": "read", "id": "memory-1"}),
+            capture_output=True, text=True, encoding="utf-8", timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout[-300:])
+        replies = [json.loads(row) for row in result.stdout.splitlines()]
+        self.assertEqual([row["ok"] for row in replies], [True, False, False, True])
+        self.assertEqual(replies[1]["error"], "read_only_operation_not_supported")
+        self.assertEqual(replies[2]["error"], "invalid_stdin")
+        self.assertEqual(replies[3]["record"]["id"], "memory-1")
+        self.assertNotIn(self.password, result.stdout + result.stderr)
+
+    def test_large_audio_chunks_carry_a_megabyte_frame_over_tls(self):
+        size = self.library["assets"][0]["size"]
+        self.assertGreater(size, 2 * 262144)
+        with fixture_peer(self.root / "source", self.password, native_binary=self.peer,
+                          large_audio_chunks=True) as port:
+            self.app.transport = lambda payload: self.raw_request(payload, port=port)
+            self.app.sync()
+            result = self.app.audio("audio-demo")
+        self.assertEqual(sha(result["path"]), self.library["assets"][0]["sha256"])
+        self.assertEqual(result["transferRequests"], 1)
 
     def test_all_pages_atomic_and_idempotent(self):
         first = self.app.sync()
