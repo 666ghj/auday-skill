@@ -210,6 +210,57 @@ class WindowsPSKTests(unittest.TestCase):
             with mock.patch.object(link, "endpoint_candidates", return_value=candidates):
                 self.assertTrue(self.call(peer)["ok"])
 
+    def test_session_remembers_the_address_that_answered(self):
+        with PythonPeer(generated_password()) as peer:
+            dead = socket.socket()
+            dead.bind(("127.0.0.1", 0))
+            candidates = [(socket.AF_INET, ("127.0.0.1", dead.getsockname()[1])),
+                          (socket.AF_INET, ("127.0.0.1", peer.port))]
+            dead.close()
+            resolved = {}
+            with mock.patch.object(link, "endpoint_candidates", return_value=candidates) as lookup:
+                for _ in range(3):
+                    self.assertTrue(link.request({"service": "synthetic"}, peer.password,
+                                                 {"op": "status"}, 2, resolved)["ok"])
+            self.assertEqual(lookup.call_count, 1)
+            self.assertEqual(list(resolved.values()), [[candidates[1], candidates[0]]])
+            self.assertEqual(len(peer.requests), 3)
+
+    def test_session_finds_the_phone_again_after_its_address_changes(self):
+        password, resolved = generated_password(), {}
+        with PythonPeer(password) as first:
+            old = [(socket.AF_INET, ("127.0.0.1", first.port))]
+            with mock.patch.object(link, "endpoint_candidates", return_value=old):
+                link.request({"service": "synthetic"}, password, {"op": "status"}, 2, resolved)
+        with PythonPeer(password) as second:
+            new = [(socket.AF_INET, ("127.0.0.1", second.port))]
+            with mock.patch.object(link, "endpoint_candidates", return_value=new) as lookup:
+                self.assertTrue(link.request({"service": "synthetic"}, password, {"op": "status"}, 2, resolved)["ok"])
+            self.assertEqual(lookup.call_count, 1)
+            self.assertEqual(list(resolved.values()), [new])
+        with mock.patch.object(link, "endpoint_candidates", return_value=new):
+            with self.assertRaises(link.LinkError):
+                link.request({"service": "synthetic"}, password, {"op": "status"}, 1, resolved)
+        self.assertEqual(resolved, {})
+
+    def test_session_reads_the_saved_secret_once_and_again_after_a_failure(self):
+        password = generated_password()
+        with PythonPeer(password) as peer:
+            def line(request):
+                return json.dumps({"profile": "synthetic", "host": "127.0.0.1", "port": peer.port,
+                                   "request": request, "timeout": 2}).encode() + b"\n"
+
+            requests = line({"op": "status"}) * 2 + line([]) + line({"op": "status"})
+            with mock.patch.object(link, "read_secret", return_value=password) as read, \
+                    contextlib.redirect_stdout(io.StringIO()) as output:
+                self.assertEqual(link.session(io.BytesIO(requests)), 0)
+            replies = [json.loads(row) for row in output.getvalue().splitlines()]
+            self.assertEqual([row["ok"] for row in replies], [True, True, False, True])
+            self.assertEqual(replies[2]["error"], "missing_request")
+            self.assertEqual(read.call_count, 2)
+            self.assertEqual(len(peer.requests), 3)
+            self.assertNotIn(password, output.getvalue())
+
     def test_cli_json_stdin_contract(self):
         password = generated_password()
         with PythonPeer(password) as peer:

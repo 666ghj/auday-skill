@@ -45,9 +45,11 @@ def _integer(request, key, default):
 
 
 class FixtureLibrary:
-    def __init__(self, root, access="text-and-audio-read-only"):
+    def __init__(self, root, access="text-and-audio-read-only", large_audio_chunks=False):
         if access not in SCOPES:
             raise ValueError("invalid_access")
+        # A newer phone advertises `largeAudioChunks` and accepts 1 MiB.
+        self.audio_chunk_bytes = 4 * CHUNK_BYTES if large_audio_chunks else CHUNK_BYTES
         self.root = Path(root).resolve()
         self.access = access
         self.allows_audio = access == "text-and-audio-read-only"
@@ -156,6 +158,8 @@ class FixtureLibrary:
                 assetCount=len(self.assets),
                 categories=list(KINDS) + (["audio"] if self.allows_audio else []),
             )
+            if self.audio_chunk_bytes > CHUNK_BYTES:
+                reply["capabilities"] = {"largeAudioChunks": True}
         elif operation in ("list", "assets"):
             rows = self.records if operation == "list" else self.assets
             offset = _integer(request, "offset", 0)
@@ -190,7 +194,7 @@ class FixtureLibrary:
             size = asset["size"]
             offset = _integer(request, "offset", 0)
             length = _integer(request, "length", CHUNK_BYTES)
-            if not 0 <= offset <= size or not 0 < length <= CHUNK_BYTES:
+            if not 0 <= offset <= size or not 0 < length <= self.audio_chunk_bytes:
                 raise ValueError("invalid_range")
             count = min(length, size - offset)
             with self.asset_url(asset).open("rb") as stream:

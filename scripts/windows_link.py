@@ -214,7 +214,12 @@ def receive_frame(connection, deadline):
     return response
 
 
-def request(destination, password, payload, timeout=10):
+def request(destination, password, payload, timeout=10, resolved=None):
+    """Send one request on its own authenticated connection.
+
+    `resolved` is a session's memory of the addresses that last answered each
+    destination. Without it every request repeats service discovery.
+    """
     if not isinstance(payload, dict):
         raise LinkError("missing_request")
     try:
@@ -225,37 +230,49 @@ def request(destination, password, payload, timeout=10):
         raise LinkError("request_too_large")
     deadline = time.monotonic() + _timeout(timeout)
     context = tls_context(password)
-    candidates = endpoint_candidates(destination, deadline)
-    for index, (family, address) in enumerate(candidates):
-        raw = socket.socket(family, socket.SOCK_STREAM)
-        secured = None
-        sent = False
-        try:
-            # Reserve time for other addresses if an advertised interface is down.
-            budget = _remaining(deadline)
-            if index + 1 < len(candidates):
-                budget = min(2, budget / (len(candidates) - index))
-            raw.settimeout(budget)
-            raw.connect(address)
-            raw.settimeout(min(budget, _remaining(deadline)))
-            secured = context.wrap_socket(raw)
-            if secured.version() != "TLSv1.2" or secured.cipher()[0] != CIPHER:
-                raise LinkError("unexpected_tls_parameters")
-            secured.settimeout(_remaining(deadline))
-            sent = True
-            secured.sendall(struct.pack(">I", len(data)) + data)
-            response = receive_frame(secured, deadline)
-            response["transport"] = {"tlsVersion": "0x0303", "cipherSuite": "0xccac"}
-            return response
-        except (OSError, TimeoutError):
-            if sent:
-                # Do not repeat requests after partial delivery.
-                raise LinkError("authentication_or_connection_failed") from None
-        finally:
-            if secured is not None:
-                secured.close()
-            raw.close()
-    raise LinkError("authentication_or_connection_failed")
+    key = json.dumps([destination.get(name) for name in ("service", "host", "port", "peerToPeer")], default=str)
+    # Forget the remembered addresses until one answers again, so no failure
+    # can leave a stale address in the session.
+    remembered = resolved.pop(key, None) if resolved is not None else None
+    candidates = remembered or endpoint_candidates(destination, deadline)
+    while True:
+        for index, (family, address) in enumerate(candidates):
+            raw = socket.socket(family, socket.SOCK_STREAM)
+            secured = None
+            sent = False
+            try:
+                # Reserve time for other addresses if an advertised interface is
+                # down, and for a new lookup if a remembered address has moved.
+                budget = _remaining(deadline)
+                if candidates is remembered or index + 1 < len(candidates):
+                    budget = min(2, budget / (len(candidates) - index))
+                raw.settimeout(budget)
+                raw.connect(address)
+                raw.settimeout(min(budget, _remaining(deadline)))
+                secured = context.wrap_socket(raw)
+                if secured.version() != "TLSv1.2" or secured.cipher()[0] != CIPHER:
+                    raise LinkError("unexpected_tls_parameters")
+                secured.settimeout(_remaining(deadline))
+                sent = True
+                secured.sendall(struct.pack(">I", len(data)) + data)
+                response = receive_frame(secured, deadline)
+                response["transport"] = {"tlsVersion": "0x0303", "cipherSuite": "0xccac"}
+                if resolved is not None:
+                    # The address that answered goes first next time.
+                    resolved[key] = [candidates[index], *candidates[:index], *candidates[index + 1:]]
+                return response
+            except (OSError, TimeoutError):
+                if sent:
+                    # Do not repeat requests after partial delivery.
+                    raise LinkError("authentication_or_connection_failed") from None
+            finally:
+                if secured is not None:
+                    secured.close()
+                raw.close()
+        if candidates is not remembered:
+            raise LinkError("authentication_or_connection_failed")
+        remembered = None
+        candidates = endpoint_candidates(destination, deadline)
 
 
 def local_password():
@@ -295,9 +312,9 @@ def local_password():
     return password
 
 
-def stdin_object():
-    stream = getattr(sys.stdin, "buffer", sys.stdin)
-    data = stream.readline(MAXIMUM + 1)
+def stdin_object(data=None):
+    if data is None:
+        data = getattr(sys.stdin, "buffer", sys.stdin).readline(MAXIMUM + 1)
     if not data or len(data) > MAXIMUM:
         raise LinkError("invalid_stdin")
     try:
@@ -309,15 +326,57 @@ def stdin_object():
     return value
 
 
+def session(stream=None):
+    """Answer one command's sequential requests, one JSON line each.
+
+    A 10 MB recording is some forty requests. Starting Python, reading the saved
+    secret and discovering the phone for each one cost more than the transfer.
+    Every request still opens its own authenticated connection.
+    """
+    stream = stream or getattr(sys.stdin, "buffer", sys.stdin)
+    secrets, resolved = {}, {}
+    while True:
+        data = stream.readline(MAXIMUM + 1)
+        if not data:
+            return 0
+        try:
+            value = stdin_object(data)
+            password = value.get("password")
+            if password is None:
+                profile = value.get("profile", "default")
+                if profile not in secrets:
+                    secrets[profile] = read_secret(profile)
+                password = secrets[profile]
+            result = request(value, password, value.get("request"), value.get("timeout", 10), resolved)
+        except (LinkError, CredentialError) as error:
+            # The saved secret may have been replaced by a new pairing.
+            secrets.clear()
+            result = {"ok": False, "error": str(error)}
+        except Exception:
+            # Do not leak credentials, endpoints, or peer-controlled data via tracebacks.
+            secrets.clear()
+            resolved.clear()
+            result = {"ok": False, "error": "authentication_or_connection_failed"}
+        try:
+            print(json.dumps(result, ensure_ascii=True, separators=(",", ":")), flush=True)
+        except OSError:
+            return 1  # The command that owned this session has gone.
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["discover", "pair", "request", "probe"])
+    parser.add_argument("command", choices=["discover", "pair", "request", "session", "probe"])
     parser.add_argument("--profile")
     parser.add_argument("--service")
     parser.add_argument("--host")
     parser.add_argument("--port", type=int)
     parser.add_argument("--peer-to-peer", action="store_true")
     args = parser.parse_args(argv)
+    if args.command == "session":
+        try:
+            return session()
+        except KeyboardInterrupt:
+            return 1
     try:
         if args.command == "probe":
             tls_context("23456789ABCDEFGH")  # Public synthetic capability check only.

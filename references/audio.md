@@ -13,7 +13,7 @@ Choose an engine using [language and dialect routing](audio-language-routing.md)
 
 ## Prepare
 
-Fetch the selected asset with `<auday> audio <asset-id>` and retain its `.asset.json`. If the phone permits text only, do not bypass that scope. Stored audio may contain enhancements, missing intervals, or omitted silence; analysis cannot recover sound that no longer exists.
+Fetch the selected asset with `<auday> audio <asset-id>` and retain its `.asset.json`. For several recordings, name them all in one command (`<auday> audio <asset-id> <asset-id> ...`) rather than running one command each. If the phone permits text only, do not bypass that scope. Stored audio may contain enhancements, missing intervals, or omitted silence; analysis cannot recover sound that no longer exists.
 
 For a new computer, follow [first-run setup](first-run.md); do not require the user to install command-line tools or models manually. Prepare transcription only when the task needs it. The integrated route installs one selected Whisper model, the required runtime/audio conversion tools, and anonymous diarization by default:
 

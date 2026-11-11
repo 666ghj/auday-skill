@@ -9,8 +9,8 @@ func emit(_ value: Any) throws {
 }
 let args = Array(CommandLine.arguments.dropFirst())
 func option(_ key: String) -> String? { guard let i = args.firstIndex(of: key), i + 1 < args.count else { return nil }; return args[i + 1] }
-func stdinObject() throws -> [String: Any] {
-    guard let line = readLine(), let data = line.data(using: .utf8), data.count <= FrameConnection.maximum,
+func object(_ line: String?) throws -> [String: Any] {
+    guard let line, let data = line.data(using: .utf8), data.count <= FrameConnection.maximum,
           let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw LinkError.message("invalid_stdin") }
     return object
 }
@@ -52,6 +52,19 @@ func endpoint(_ input: [String: Any]) throws -> NWEndpoint {
     guard let host = input["host"] as? String, let port = input["port"] as? UInt16, port != 0 else { throw LinkError.message("missing_endpoint") }
     return .hostPort(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: port)!)
 }
+/// `secrets` holds what this process already read from the Keychain, by profile.
+func answer(_ input: [String: Any], secrets: inout [String: String]) throws -> [String: Any] {
+    let password: String
+    if let supplied = input["password"] as? String { password = supplied }
+    else {
+        let profile = input["profile"] as? String ?? "default"
+        if let saved = secrets[profile] { password = saved }
+        else { password = try readSecret(profile); secrets[profile] = password }
+    }
+    guard let request = input["request"] as? [String: Any] else { throw LinkError.message("missing_request") }
+    return try call(endpoint: try endpoint(input), password: password, request: request,
+                    peerToPeer: input["peerToPeer"] as? Bool ?? false, timeout: input["timeout"] as? Double ?? 10)
+}
 
 do {
     switch args.first {
@@ -59,13 +72,23 @@ do {
         // Do not invoke from an AI chat: this command is for a user's terminal only.
         print(try CommunicationPassword.generate())
     case "request":
-        let input = try stdinObject()
-        let password: String
-        if let supplied = input["password"] as? String { password = supplied }
-        else { password = try readSecret(input["profile"] as? String ?? "default") }
-        guard let request = input["request"] as? [String: Any] else { throw LinkError.message("missing_request") }
-        try emit(call(endpoint: try endpoint(input), password: password, request: request,
-                      peerToPeer: input["peerToPeer"] as? Bool ?? false, timeout: input["timeout"] as? Double ?? 10))
+        var secrets: [String: String] = [:]
+        try emit(answer(try object(readLine()), secrets: &secrets))
+    case "session":
+        // One process answers a command's sequential requests, one JSON line
+        // each, until stdin closes. A 10 MB recording is some forty requests;
+        // starting the client and reading the Keychain for each one cost more
+        // than the transfer. Every request still opens its own authenticated
+        // connection, and nothing is retried here.
+        var secrets: [String: String] = [:]
+        while let line = readLine() {
+            do { try emit(answer(try object(line), secrets: &secrets)) }
+            catch {
+                // The saved secret may have been replaced by a new pairing.
+                secrets.removeAll()
+                try emit(["ok": false, "error": String(describing: error)])
+            }
+        }
     case "pair":
         guard isatty(STDIN_FILENO) == 1, let profile = option("--profile") else { throw LinkError.message("pair_requires_local_terminal_and_profile") }
         var destination: [String: Any] = [:]
@@ -85,7 +108,7 @@ do {
         browser.start(queue: queue)
         queue.asyncAfter(deadline: .now() + 3) { browser.cancel(); try? emit(["services": services, "authenticated": false]); exit(0) }
         dispatchMain()
-    case nil, "--help", "help": print("auday-link discover [--peer-to-peer] | pair --profile NAME --service NAME | request (JSON stdin)")
+    case nil, "--help", "help": print("auday-link discover [--peer-to-peer] | pair --profile NAME --service NAME | request (JSON stdin) | session (JSON lines on stdin)")
     default: throw LinkError.message("unsupported_client_command")
     }
 } catch { try? emit(["ok": false, "error": String(describing: error)]); exit(1) }

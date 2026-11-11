@@ -25,8 +25,11 @@ public final class Library {
     public let records: [[String: Any]]
     public let assets: [[String: Any]]
     public let scope: AccessScope
-    public init(root: URL, scope: AccessScope = .textAndAudio) throws {
+    /// A newer phone advertises `largeAudioChunks` and accepts 1 MiB.
+    public let audioChunkBytes: Int
+    public init(root: URL, scope: AccessScope = .textAndAudio, largeAudioChunks: Bool = false) throws {
         self.scope = scope
+        self.audioChunkBytes = largeAudioChunks ? 1_048_576 : 262_144
         self.root = root.resolvingSymlinksInPath().standardizedFileURL
         let raw = try Data(contentsOf: root.appendingPathComponent("library.json"))
         guard raw.count <= 32 * 1024 * 1024,
@@ -80,6 +83,7 @@ public final class Library {
         case "status":
             reply["access"] = scope.rawValue; reply["recordCount"] = records.count; reply["assetCount"] = assets.count
             reply["categories"] = ["transcript", "highlight", "summary", "reflection", "memory"] + (scope.allowsAudio ? ["audio"] : [])
+            if audioChunkBytes > 262_144 { reply["capabilities"] = ["largeAudioChunks": true] }
         case "list":
             let offset = request["offset"] as? Int ?? 0
             guard offset >= 0, offset <= records.count else { throw LinkError.message("invalid_offset") }
@@ -107,7 +111,7 @@ public final class Library {
             guard let id = request["id"] as? String, let row = assets.first(where: { $0["id"] as? String == id }),
                   let size = row["size"] as? Int else { throw LinkError.message("asset_not_found") }
             let offset = request["offset"] as? Int ?? 0; let length = request["length"] as? Int ?? 262144
-            guard offset >= 0, offset <= size, length > 0, length <= 262144 else { throw LinkError.message("invalid_range") }
+            guard offset >= 0, offset <= size, length > 0, length <= audioChunkBytes else { throw LinkError.message("invalid_range") }
             let file = try FileHandle(forReadingFrom: assetURL(row)); defer { try? file.close() }
             try file.seek(toOffset: UInt64(offset)); let data = try file.read(upToCount: min(length, size - offset)) ?? Data()
             guard data.count == min(length, size - offset) else { throw LinkError.message("asset_changed") }
