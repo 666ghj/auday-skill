@@ -12,15 +12,22 @@ def main(arguments=None):
     arguments = list(sys.argv[1:] if arguments is None else arguments)
     if sys.platform != "win32":
         raise ValueError("windows_bootstrap_requires_windows")
+    runtime = None
+    if len(arguments) >= 2 and arguments[0] == "--runtime-root":
+        # bootstrap.ps1 already chose where runtimes live (for example the hidden
+        # application directory while a new archive location is being saved).
+        runtime = Path(arguments[1]).resolve()
+        arguments = arguments[2:]
     if len(arguments) < 2 or arguments[0] != "--home":
         raise ValueError("bootstrap_home_required")
     root = Path(arguments[1]).resolve()
-    python = ensure_windows_link(root, python_path=sys.executable)
+    runtime = runtime or root
+    python = ensure_windows_link(runtime, python_path=sys.executable)
     # Use a subprocess instead of Windows exec emulation so the parent reliably
     # receives the client's final exit status, stdout JSON and stderr progress.
     return subprocess.run(
         [str(python), str(Path(__file__).with_name("auday.py")), *arguments],
-        env=managed_env(root),
+        env=managed_env(runtime),
     ).returncode
 
 

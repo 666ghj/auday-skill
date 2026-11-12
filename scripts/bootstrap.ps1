@@ -482,7 +482,8 @@ function Start-AudayBootstrap([string[]] $CommandArguments) {
     $probe = "import ssl,sqlite3,sys,sysconfig; assert sys.version_info[:3] == (3,13,16); assert ssl.HAS_PSK; assert hasattr(ssl.SSLContext, 'set_psk_client_callback'); assert sysconfig.get_platform().lower() == '$pythonPlatform', 'native_python_architecture_required'"
     $checked = Invoke-AudayProcess $python @('-I', '-c', $probe) $environment -TimeoutSeconds 30
     if ($checked.ExitCode -ne 0) { return $checked.ExitCode }
-    $cliArguments = @((Join-Path $PSScriptRoot 'bootstrap_windows.py'), '--home', $dataRoot) + $forward.ToArray()
+    $cliArguments = @((Join-Path $PSScriptRoot 'bootstrap_windows.py'), '--runtime-root', $runtimeRoot,
+        '--home', $dataRoot) + $forward.ToArray()
     $finished = Invoke-AudayProcess $python $cliArguments $environment -TimeoutSeconds 0
     return $finished.ExitCode
 }
