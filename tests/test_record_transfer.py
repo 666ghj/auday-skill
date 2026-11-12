@@ -2,6 +2,7 @@ import base64
 import contextlib
 import hashlib
 import io
+import itertools
 import json
 import os
 import sys
@@ -11,6 +12,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+import auday
 from auday import Auday
 
 
@@ -173,11 +175,24 @@ class RecordTransferTests(unittest.TestCase):
         self.assert_old_cache()
 
     def test_preparation_wait_has_a_deadline(self):
-        with patch("auday.time.monotonic", side_effect=[0, 121]):
+        limit = auday.SNAPSHOT_PREPARATION_LIMIT_SECONDS
+        with patch("auday.time.monotonic", side_effect=[0, limit + 1]):
             with self.assertRaisesRegex(ValueError, "snapshot_preparation_timed_out"):
                 self.sync()
         self.assertEqual(self.peer.prepare_calls, 1)
         self.assert_old_cache()
+
+    def test_preparation_longer_than_two_minutes_completes_with_notices(self):
+        # A ~32,000-record phone library took about 253 s to prepare.
+        clock = itertools.chain([0, 130, 253], itertools.repeat(253))
+        stderr = io.StringIO()
+        with patch("auday.time.monotonic", side_effect=lambda: next(clock)), \
+                patch.dict(os.environ, {"AUDAY_PROGRESS": "1"}), \
+                contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io.StringIO()):
+            result = self.sync()
+        self.assertEqual(result["recordCount"], 1)
+        self.assertEqual(self.peer.prepare_calls, 1)
+        self.assertEqual(stderr.getvalue().count("Still preparing text snapshot on phone"), 2)
 
     def test_hydrated_record_still_enforces_text_only_scope(self):
         self.peer.record["audioAssetIDs"] = ["synthetic-audio"]
