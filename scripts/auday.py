@@ -30,6 +30,13 @@ AUDIO_CHUNK_BYTES = 262144
 # Accepted by a phone advertising `largeAudioChunks`. As Base64 it still fits
 # one 2 MiB frame.
 LARGE_AUDIO_CHUNK_BYTES = 1048576
+# One sync waits this long for the phone to finish building its snapshot. Each
+# status poll is an authenticated round trip, so a lost phone or closed page
+# still fails within one request timeout; this only bounds a phone that keeps
+# answering "preparing". Large libraries (tens of thousands of records) take
+# several minutes on the phone.
+SNAPSHOT_PREPARATION_LIMIT_SECONDS = 30 * 60
+SNAPSHOT_PREPARATION_NOTICE_SECONDS = 30
 # A batch records these against one asset and continues with the next. Any
 # other failure concerns the connection or the snapshot and ends the batch.
 ASSET_FAILURES = frozenset((
@@ -672,7 +679,10 @@ class Auday:
             return status  # Compatible with already-prepared older companions.
         # One explicit attempt per sync. Polling does not restart a failed job
         # or chase each new recording publication indefinitely.
-        deadline = time.monotonic() + 120
+        started = time.monotonic()
+        deadline = started + SNAPSHOT_PREPARATION_LIMIT_SECONDS
+        next_notice = started + SNAPSHOT_PREPARATION_NOTICE_SECONDS
+        interval = 0.25
         report("Preparing text snapshot on phone")
         request = {"op": "prepareSnapshot", "retry": True}
         if capabilities.get("snapshotLeases") is True:
@@ -687,9 +697,16 @@ class Auday:
                     token = None
                     raise ValueError("invalid_snapshot_lease")
             while status.get("snapshotState") == "preparing":
-                if time.monotonic() >= deadline:
+                now = time.monotonic()
+                if now >= deadline:
                     raise ValueError("snapshot_preparation_timed_out")
-                time.sleep(0.25)
+                if now >= next_notice:
+                    report("Still preparing text snapshot on phone; keep the connection page open", force=True)
+                    next_notice = now + SNAPSHOT_PREPARATION_NOTICE_SECONDS
+                time.sleep(interval)
+                # Quick snapshots stay responsive; a build lasting minutes is
+                # polled once a second instead of opening four connections a second.
+                interval = min(1.0, interval * 2)
                 poll = {"op": "status"}
                 if token is not None:
                     poll["lease"] = token

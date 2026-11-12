@@ -97,7 +97,7 @@ With a compatible phone, the audio catalogue is lightweight: the `audio` command
 | `snapshot_changed` | The incomplete snapshot was not committed; sync the current snapshot once |
 | `snapshot_busy` | Other transfers hold the phone's retained snapshots; let them finish, then retry the requested update once |
 | `snapshot_preparation_failed` | Inspect the phone's preparation message; retry sync once after resolving it |
-| `snapshot_preparation_timed_out` | Keep the page open and check status; do not start an unbounded retry loop |
+| `snapshot_preparation_timed_out` | The phone kept preparing for 30 minutes. Keep the page open and check status; do not start an unbounded retry loop |
 | `record_chunk_hash_mismatch` or `record_hash_mismatch` | The cache was not replaced; retry the sync once |
 | `source_device_changed` | Use a new profile; do not merge unrelated device archives |
 | Interrupted audio | Repeat the same audio request to resume |

@@ -350,7 +350,8 @@ class SnapshotConsistencyTests(unittest.TestCase):
         self.assertEqual(self.app.metadata(), {})
         self.peer.fail_preparation = False
         self.peer.prepare_polls = 2
-        with patch("auday.time.monotonic", side_effect=[0, 121]):
+        limit = auday.SNAPSHOT_PREPARATION_LIMIT_SECONDS
+        with patch("auday.time.monotonic", side_effect=[0, limit + 1]):
             with self.assertRaisesRegex(ValueError, "snapshot_preparation_timed_out"):
                 self.app.sync()
         self.assertFalse(self.peer.leases)
