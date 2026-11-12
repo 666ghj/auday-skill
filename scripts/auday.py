@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from progress import muted, report
 from platform_utils import default_home, is_windows, lock_file, unlock_file, secure_directory
 from incremental_sync import body_hash, body_json, fetch_records
+import data_root
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_HOME = default_home()
@@ -1195,10 +1196,17 @@ def main():
             if hasattr(stream, "reconfigure"):
                 stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--home", type=Path, default=DEFAULT_HOME)
+    parser.add_argument("--home", type=Path, default=None,
+                        help="Data root for this command; otherwise AUDAY_HOME, the saved data-root setting, or the platform default")
     parser.add_argument("--profile", default="default")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("doctor")
+    location = commands.add_parser("data-root", help="Show, save or clear the data root used when --home is omitted")
+    location_action = location.add_mutually_exclusive_group()
+    location_action.add_argument("--save", action="store_true",
+                                 help="Use this command's data root for later commands without --home")
+    location_action.add_argument("--clear", action="store_true",
+                                 help="Return later commands to AUDAY_HOME or the platform default")
     discover = commands.add_parser("discover")
     discover.add_argument("--peer-to-peer", action="store_true")
     for name in ["pair", "pair-window"]:
@@ -1208,6 +1216,8 @@ def main():
         target.add_argument("--host")
         pair.add_argument("--port", type=int)
         pair.add_argument("--peer-to-peer", action="store_true")
+        pair.add_argument("--new-library", action="store_true",
+                          help="Start a separate library here even though this profile exists under another data root")
     sync = commands.add_parser("sync")
     sync.add_argument("--mode", choices=["incremental", "full"], default="incremental",
                       help="Reuse verified unchanged records by default; full downloads all text again")
@@ -1258,6 +1268,17 @@ def main():
     transcribe.add_argument("--asset-metadata", type=Path)
     args = parser.parse_args()
     os.umask(0o077)
+    if args.command == "data-root" and args.clear:
+        # Before resolving, so an unavailable saved root can still be cleared.
+        data_root.clear_home()
+    args.home, home_source = data_root.resolve_home(args.home)
+    if args.command == "data-root":
+        if not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", args.profile):
+            raise ValueError("invalid_profile_name")
+        if args.save:
+            data_root.save_home(args.home)
+        dump(data_root.describe(args.home, home_source, args.profile))
+        return
     if args.command == "doctor":
         from first_run import setup_status
         dump(
@@ -1271,6 +1292,8 @@ def main():
                 "companionProtocol": "auday-workflow-link-v2",
                 "phoneSupport": "compatible-build-required",
                 "liveConnectionSupported": sys.platform in ("darwin", "win32"),
+                "dataRoot": str(args.home.expanduser().resolve()),
+                "dataRootSource": home_source,
                 "capabilities": setup_status(args.home, args.profile),
             }
         )
@@ -1334,6 +1357,7 @@ def main():
     app = Auday(args.home, args.profile)
     try:
         if args.command in ["pair", "pair-window"]:
+            data_root.ensure_single_library(args.home, args.profile, args.new_library)
             if args.command == "pair-window":
                 bridge_command()
                 command = [
@@ -1353,6 +1377,8 @@ def main():
                     command += ["--host", args.host, "--port", str(args.port)]
                 if args.peer_to_peer:
                     command += ["--peer-to-peer"]
+                if args.new_library:
+                    command += ["--new-library"]
                 if is_windows():
                     # The new console owns hidden input; the assistant receives
                     # only this pending status, never the communication secret.
@@ -1388,18 +1414,27 @@ def main():
             subprocess.run(command, check=True)
             atomic_json(app.root / "connection.json", config)
         elif args.command == "sync":
+            if not (app.root / "connection.json").exists():
+                others = data_root.other_libraries(args.home, args.profile)
+                if others:
+                    raise ValueError("not_paired_here: this profile already has a library under " + others[0]["dataRoot"]
+                                     + "; run data-root to choose that data root instead of pairing again")
             dump(app.sync(mode=args.mode))
         elif args.command == "library":
             dump(app.library(language=args.language))
         elif args.command == "status":
-            dump(
-                {
-                    "cache": app.metadata(),
-                    "phone": app.request({"op": "status"})
-                    if args.live
-                    else "not_probed",
-                }
-            )
+            cache = app.metadata()
+            result = {
+                "cache": cache,
+                "phone": app.request({"op": "status"}) if args.live else "not_probed",
+                "dataRoot": str(app.root.parent),
+                "dataRootSource": home_source,
+            }
+            if not cache:
+                others = data_root.other_libraries(args.home, args.profile)
+                if others:
+                    result["otherLibraries"] = others
+            dump(result)
         elif args.command == "search":
             dump(app.search(args.query, args.kind, args.date, args.limit, args.offset))
         elif args.command == "assets":

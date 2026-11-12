@@ -3,14 +3,43 @@
 set -eu
 umask 077
 auday_script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-auday_data_root="$HOME/Library/Application Support/AudayWorkflow"
+# Data root order, matching scripts/data_root.py: --home, AUDAY_HOME, the saved
+# one-line setting written by `data-root --save`, then the platform default.
+auday_default_root="$HOME/Library/Application Support/AudayWorkflow"
+auday_data_root=$auday_default_root
+auday_root_source=default
 if [ "${1-}" = "--home" ]; then
     [ "$#" -ge 2 ] || { printf '%s\n' 'Auday: --home needs a directory.' >&2; exit 2; }
     auday_data_root=$2
+    auday_root_source=option
     shift 2
+elif [ -n "${AUDAY_HOME-}" ]; then
+    auday_data_root=$AUDAY_HOME
+    auday_root_source=environment
+elif [ -f "$auday_default_root/data-root" ]; then
+    auday_saved_root=
+    IFS= read -r auday_saved_root < "$auday_default_root/data-root" || true
+    auday_saved_root=${auday_saved_root%"$(printf '\r')"}
+    if [ -n "$auday_saved_root" ]; then
+        case "$auday_saved_root" in /*) ;; *)
+            printf '%s\n' 'Auday: the saved data root is not an absolute path. Run with --home and data-root --clear.' >&2
+            exit 2 ;;
+        esac
+        # A saved root existed when it was saved. If it is missing, its drive is
+        # probably disconnected; never create a new library at that path.
+        [ -d "$auday_saved_root" ] || {
+            printf '%s\n' "Auday: the saved data root is unavailable: $auday_saved_root. Reconnect its drive, or run with --home and data-root --clear." >&2
+            exit 2
+        }
+        auday_data_root=$auday_saved_root
+        auday_root_source=saved
+    fi
 fi
 case "$auday_data_root" in /*) ;; *)
-    printf '%s\n' 'Auday: --home must be an absolute directory path.' >&2; exit 2 ;;
+    printf '%s\n' 'Auday: the data root (--home or AUDAY_HOME) must be an absolute directory path.' >&2; exit 2 ;;
+esac
+case "$auday_data_root" in *[[:cntrl:]]*)
+    printf '%s\n' 'Auday: the data root must not contain control characters.' >&2; exit 2 ;;
 esac
 if [ "$(/usr/bin/uname -s)" != Darwin ]; then
     printf '%s\n' '{"ok":false,"error":"macOS_required"}'
@@ -36,8 +65,9 @@ if [ "${1-}" = check ]; then
     while [ ! -d "$auday_probe_dir" ]; do auday_probe_dir=$(/usr/bin/dirname "$auday_probe_dir"); done
     auday_free_kb=$(/bin/df -Pk "$auday_probe_dir" | /usr/bin/awk 'NR==2 {print $4}')
     auday_memory=$(/usr/sbin/sysctl -n hw.memsize)
-    printf '{"ok":true,"macOS":"%s","architecture":"%s","memoryBytes":%s,"availableDiskBytes":%s,"appleDeveloperToolsSelected":%s,"downloadsStarted":false,"nextStep":"run bootstrap doctor to prepare the private base runtime"}\n' \
-        "$auday_os" "$auday_arch" "$auday_memory" "$((auday_free_kb * 1024))" "$auday_clt"
+    auday_root_json=$(printf '%s' "$auday_data_root" | /usr/bin/sed 's/\\/\\\\/g; s/"/\\"/g')
+    printf '{"ok":true,"macOS":"%s","architecture":"%s","memoryBytes":%s,"availableDiskBytes":%s,"appleDeveloperToolsSelected":%s,"dataRoot":"%s","dataRootSource":"%s","downloadsStarted":false,"nextStep":"run bootstrap doctor to prepare the private base runtime"}\n' \
+        "$auday_os" "$auday_arch" "$auday_memory" "$((auday_free_kb * 1024))" "$auday_clt" "$auday_root_json" "$auday_root_source"
     exit 0
 fi
 

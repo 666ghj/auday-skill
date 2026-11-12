@@ -57,6 +57,18 @@ The secret is shared by authorized clients. This version does not provide per-co
 
 `--home` and `--profile` are global options placed before the command, with `--home` first when both are provided. Use separate profiles for separate phones. Passwords are never command arguments. Existing integrations with an appropriate Python runtime may still invoke `auday.py` directly.
 
+### Data root
+
+`--home` changes the data root for one command only. To keep the library somewhere else for every later command, for example in a workspace or a folder the user browses, save it once:
+
+```text
+<auday> --home "<absolute-data-root>" data-root --save
+```
+
+Commands without `--home` then use, in order, the `AUDAY_HOME` environment variable, the saved setting, and the platform default. Both bootstrap entrypoints and `auday.py` follow the same order. `<auday> data-root` shows the active root, why it was chosen, and copies of the profile under other known roots; `data-root --clear` returns later commands to the default. `doctor` and `status` also report `dataRoot` and `dataRootSource`.
+
+A pairing belongs to its data root. A new, empty root needs pairing and a first full sync of its own; later syncs there are incremental. `pair` refuses to start an empty library while the same profile is already paired or synchronized under another known root (`AUDAY_HOME`, the saved setting, or the default). Select that root instead. Pass `--new-library` only when the user wants a separate library. If a saved root is missing, for example on a disconnected drive, commands stop instead of creating a new library at that path.
+
 The default keyword search combines whitespace-separated terms with AND and supports substring matching. It is distinct from the [local semantic mode](semantic-search.md), selected with `search --mode semantic` after preparing the local model and index. Keyword results carry `syncedAt`; use `nextOffset` with `--offset` to continue. `--date` matches a record's preserved ISO date, not a reconstructed date in the computer's current time zone. Some derived records lack `start`, so browse by kind or follow their sources.
 
 `sync` defaults to incremental mode. With a phone advertising `incrementalRecords`, it reads a complete lightweight record manifest and downloads only new, changed, or locally damaged bodies in batches. Unchanged verified bodies are reused. Missing source IDs are removed from the searchable SQLite projection only after the entire captured snapshot verifies. Scope is part of snapshot identity; a changed scope revalidates all bodies. Text-only mode returns no audio catalogue and rejects audio requests.
@@ -94,6 +106,9 @@ With a compatible phone, the audio catalogue is lightweight: the `audio` command
 | --- | --- |
 | `not_paired` or missing OS credential | Start the local pairing prompt |
 | `awaiting_phone_or_wrong_password` | Check the active phone page, reachable LAN, local-network permission, and matching password; do not retry without a bound |
+| `another_library_exists` | This profile is already paired or synchronized under the reported data root. Use that root; pass `--new-library` only when the user wants a separate library |
+| `not_paired_here` | This data root is not paired, but the profile already has a library under the reported root. Select that root instead of pairing again |
+| `saved_data_root_unavailable` | Reconnect the drive holding the saved root. Clear the setting with `--home <root> data-root --clear` only with the user's agreement |
 | `snapshot_changed` | The incomplete snapshot was not committed; sync the current snapshot once |
 | `snapshot_busy` | Other transfers hold the phone's retained snapshots; let them finish, then retry the requested update once |
 | `snapshot_preparation_failed` | Inspect the phone's preparation message; retry sync once after resolving it |
@@ -114,4 +129,4 @@ The cache is a persistent SQLite file, with `default` as the normal profile:
 | Mac | `~/Library/Application Support/AudayWorkflow/<profile>/library.sqlite` |
 | Windows | `%LOCALAPPDATA%\AudayWorkflow\<profile>\library.sqlite` |
 
-It survives closing the agent or restarting the computer. Every successful sync also updates the profile's [maintained file library](library.md) in `library/`. `libraryStatus` reports this stage separately: a failed file refresh does not undo the verified SQLite sync. Run `<auday> library` to refresh the files from the saved database without contacting the phone. Downloaded audio remains in the profile's `audio/` directory. Resolve and show the actual local path when the user wants to browse it. The [readable export workflow](context.md#readable-files) remains available for separate static snapshots.
+A saved or `AUDAY_HOME` [data root](#data-root) replaces the `AudayWorkflow` directory in these paths. It survives closing the agent or restarting the computer. Every successful sync also updates the profile's [maintained file library](library.md) in `library/`. `libraryStatus` reports this stage separately: a failed file refresh does not undo the verified SQLite sync. Run `<auday> library` to refresh the files from the saved database without contacting the phone. Downloaded audio remains in the profile's `audio/` directory. Resolve and show the actual local path when the user wants to browse it. The [readable export workflow](context.md#readable-files) remains available for separate static snapshots.

@@ -309,6 +309,53 @@ class PowerShellBootstrapTests(unittest.TestCase):
         self.assertFalse(payload["downloadsStarted"])
         self.assertFalse(data_root.exists())
 
+    @unittest.skipUnless(sys.platform == "win32", "Windows absolute paths")
+    def test_data_root_follows_option_environment_saved_then_default(self):
+        local = self.root / "local data"
+        default = local / "AudayWorkflow"
+        saved = self.root / "saved root \u8bb0\u5fc6"
+        default.mkdir(parents=True)
+        saved.mkdir()
+        (default / "data-root").write_text(str(saved) + "\r\n", encoding="utf-8")
+        body = (f"$local = {self.literal(local)}\n"
+                "@{ configured = (Get-AudayDataRoot $local $null); explicit = (Get-AudayDataRoot $local 'D:\\explicit') }"
+                " | ConvertTo-Json -Compress")
+        clean = {key: value for key, value in os.environ.items() if key != "AUDAY_HOME"}
+        result = self.powershell(body, environment=clean)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {"configured": str(saved), "explicit": "D:\\explicit"})
+        result = self.powershell(body, environment={**clean, "AUDAY_HOME": "E:\\from environment"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)["configured"], "E:\\from environment")
+        saved.rename(saved.with_name("moved"))
+        result = self.powershell(f"Get-AudayDataRoot {self.literal(local)} $null", environment=clean)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("saved_data_root_unavailable", result.stderr)
+        self.assertFalse(saved.exists())
+        (default / "data-root").unlink()
+        result = self.powershell(f"Get-AudayDataRoot {self.literal(local)} $null", environment=clean)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), str(default))
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows OS-only entrypoint")
+    def test_check_reports_the_saved_data_root_without_creating_it(self):
+        local = self.root / "local"
+        saved = self.root / "workspace \u8bb0\u5fc6"
+        (local / "AudayWorkflow").mkdir(parents=True)
+        saved.mkdir()
+        (local / "AudayWorkflow" / "data-root").write_text(str(saved) + "\n", encoding="utf-8")
+        environment = {key: value for key, value in os.environ.items() if key != "AUDAY_HOME"}
+        environment.update(LOCALAPPDATA=str(local), PATH=str(self.root / "empty-path"))
+        result = subprocess.run(
+            [POWERSHELL, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+             str(SCRIPTS / "bootstrap.ps1"), "check"],
+            env=environment, capture_output=True, text=True, encoding="utf-8", timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual((payload["dataRoot"], payload["dataRootSource"]), (str(saved), "saved"))
+        self.assertEqual(sorted(path.name for path in saved.iterdir()), [])
+
     @unittest.skipUnless(sys.platform == "win32", "native Windows argv and stream behavior")
     def test_native_process_forwards_arguments_stdout_and_exit_status(self):
         helper = self.root / "native argv.py"

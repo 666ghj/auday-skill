@@ -4,7 +4,7 @@ Validate the installed package, then test a compatible Auday iPhone build separa
 
 ## Clean runtime setup
 
-Use a newly installed copy of the skill and a new empty private data root. Do not seed it with models, package caches, a database, pairing, or configuration from a developer's working installation. Record OS/architecture and any system tools already present. An isolated data root on a developer computer is not a factory-reset OS. Use the entrypoint for the platform being tested; do not infer Windows behavior from a Mac run.
+Use a newly installed copy of the skill and a new empty private data root. Do not seed it with models, package caches, a database, pairing, or configuration from a developer's working installation. Record OS/architecture and any system tools already present. An isolated data root on a developer computer is not a factory-reset OS. If that computer already has a paired Auday library, pairing in the isolated root requires `--new-library`; this leaves the existing library untouched. Use the entrypoint for the platform being tested; do not infer Windows behavior from a Mac run.
 
 On macOS, limit command lookup to system tools so Homebrew and other developer-installed executables cannot satisfy requirements accidentally:
 

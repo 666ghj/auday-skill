@@ -89,6 +89,8 @@ Agent 可以用关键词查找原词，也可以用[本地语义检索](referenc
 | Windows | `%LOCALAPPDATA%\AudayWorkflow\default\library.sqlite` |
 | Mac | `~/Library/Application Support/AudayWorkflow/default/library.sqlite` |
 
+如需保存到其他位置，可用 `data-root --save` 一次性设定数据目录，之后的命令都会使用它。
+
 模型、配置和索引也保存在本机。先同步文字，需要时再获取音频。关闭接入可以阻止后续读取，但无法收回其他设备已经下载的副本。
 
 在支持按需准备的手机版本中，开启接入后即可接受连接，电脑请求同步时才准备资料快照。较大的文字记录通过可续传、带校验的分块完整获取，保留已保存的内容与来源关联。当前 Skill 也兼容提前准备快照的旧版手机端。

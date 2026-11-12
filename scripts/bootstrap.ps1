@@ -264,6 +264,36 @@ function Expand-AudaySafeZip([string] $Archive, [string] $Destination) {
     } finally { if ($zip) { $zip.Dispose() } }
 }
 
+function Test-AudayAbsoluteWindowsPath([string] $Path) {
+    return ($Path -match '^[a-zA-Z]:[\\/]' -or $Path -match '^\\\\[^\\]+\\[^\\]+')
+}
+
+function Get-AudayDataRoot([string] $LocalData, [string] $Explicit) {
+    # Same order as scripts/data_root.py: --home, AUDAY_HOME, the saved one-line
+    # setting written by `data-root --save`, then the platform default.
+    if ($Explicit) { return $Explicit }
+    $fromEnvironment = [Environment]::GetEnvironmentVariable('AUDAY_HOME')
+    if ($fromEnvironment) { return $fromEnvironment }
+    if (-not $LocalData) { return $null }
+    $defaultRoot = Join-Path $LocalData 'AudayWorkflow'
+    $setting = Join-Path $defaultRoot 'data-root'
+    if ([IO.File]::Exists($setting)) {
+        $saved = ([IO.File]::ReadAllText($setting) -split "`n", 2)[0].TrimEnd([char] 13)
+        if ($saved) {
+            if (-not (Test-AudayAbsoluteWindowsPath $saved)) {
+                throw 'saved_data_root_must_be_absolute: run with --home and data-root --clear'
+            }
+            # A saved root existed when it was saved. If it is missing, its drive is
+            # probably disconnected; never create a new library at that path.
+            if (-not [IO.Directory]::Exists($saved)) {
+                throw ('saved_data_root_unavailable: ' + $saved + '; reconnect its drive, or run with --home and data-root --clear')
+            }
+            return $saved
+        }
+    }
+    return $defaultRoot
+}
+
 function Get-AudayArchitecture {
     # PROCESSOR_* variables can describe an emulated agent shell. Windows' CPU
     # inventory reports the native architecture without compiling local code.
@@ -290,20 +320,24 @@ function Start-AudayBootstrap([string[]] $CommandArguments) {
     }
     $localData = $env:LOCALAPPDATA
     if (-not $localData) { $localData = [Environment]::GetFolderPath('LocalApplicationData') }
-    $dataRoot = $null
-    if ($localData) { $dataRoot = Join-Path $localData 'AudayWorkflow' }
+    $explicitRoot = $null
     $forward = New-Object 'System.Collections.Generic.List[string]'
     $index = 0
     while ($index -lt $CommandArguments.Count) {
         $option = $CommandArguments[$index]
         if ($option -notin @('--home', '--profile')) { break }
         if ($index + 1 -ge $CommandArguments.Count) { throw ($option + '_needs_a_value') }
-        if ($option -eq '--home') { $dataRoot = $CommandArguments[$index + 1] }
+        if ($option -eq '--home') { $explicitRoot = $CommandArguments[$index + 1] }
         else { $forward.Add($option); $forward.Add($CommandArguments[$index + 1]) }
         $index += 2
     }
+    $dataRoot = Get-AudayDataRoot $localData $explicitRoot
+    $dataRootSource = 'default'
+    if ($explicitRoot) { $dataRootSource = 'option' }
+    elseif ([Environment]::GetEnvironmentVariable('AUDAY_HOME')) { $dataRootSource = 'environment' }
+    elseif ($localData -and $dataRoot -ne (Join-Path $localData 'AudayWorkflow')) { $dataRootSource = 'saved' }
     if (-not $dataRoot) { throw 'local_application_data_directory_unavailable' }
-    if ($dataRoot -notmatch '^[a-zA-Z]:[\\/]' -and $dataRoot -notmatch '^\\\\[^\\]+\\[^\\]+') { throw 'home_must_be_an_absolute_directory_path' }
+    if (-not (Test-AudayAbsoluteWindowsPath $dataRoot)) { throw 'home_must_be_an_absolute_directory_path' }
     $dataRoot = [IO.Path]::GetFullPath($dataRoot)
     if ($index -lt $CommandArguments.Count -and $CommandArguments[$index] -eq 'check') {
         if ($index + 1 -ne $CommandArguments.Count) { throw 'check_takes_no_arguments' }
@@ -311,7 +345,8 @@ function Start-AudayBootstrap([string[]] $CommandArguments) {
         try { $memory = [long] (Get-CimInstance Win32_ComputerSystem -OperationTimeoutSec 10).TotalPhysicalMemory } catch { }
         try { $free = (New-Object IO.DriveInfo([IO.Path]::GetPathRoot($dataRoot))).AvailableFreeSpace } catch { }
         [Console]::Out.WriteLine((@{ ok = $true; windows = [Environment]::OSVersion.Version.ToString(); architecture = $architecture;
-            memoryBytes = $memory; availableDiskBytes = $free; downloadsStarted = $false;
+            memoryBytes = $memory; availableDiskBytes = $free; dataRoot = $dataRoot; dataRootSource = $dataRootSource;
+            downloadsStarted = $false;
             nextStep = 'run bootstrap doctor to prepare the private base runtime' } | ConvertTo-Json -Compress))
         return 0
     }
