@@ -268,30 +268,73 @@ function Test-AudayAbsoluteWindowsPath([string] $Path) {
     return ($Path -match '^[a-zA-Z]:[\\/]' -or $Path -match '^\\\\[^\\]+\\[^\\]+')
 }
 
-function Get-AudayDataRoot([string] $LocalData, [string] $Explicit) {
-    # Same order as scripts/data_root.py: --home, AUDAY_HOME, the saved one-line
-    # setting written by `data-root --save`, then the platform default.
-    if ($Explicit) { return $Explicit }
-    $fromEnvironment = [Environment]::GetEnvironmentVariable('AUDAY_HOME')
-    if ($fromEnvironment) { return $fromEnvironment }
+function Test-AudayHasPairing([string] $Root) {
+    if (-not $Root -or -not [IO.Directory]::Exists($Root)) { return $false }
+    try {
+        foreach ($child in [IO.Directory]::GetDirectories($Root)) {
+            if ([IO.File]::Exists((Join-Path $child 'connection.json'))) { return $true }
+        }
+    } catch { return $false }
+    return $false
+}
+
+function Get-AudayVisibleRoot {
+    # Matches Python's Path.home(), which reads USERPROFILE first.
+    $profileRoot = [Environment]::GetEnvironmentVariable('USERPROFILE')
+    if (-not $profileRoot) { $profileRoot = [Environment]::GetFolderPath('UserProfile') }
+    if (-not $profileRoot) { return $null }
+    return (Join-Path $profileRoot 'Auday')
+}
+
+function Get-AudaySavedRoot([string] $LocalData) {
     if (-not $LocalData) { return $null }
-    $defaultRoot = Join-Path $LocalData 'AudayWorkflow'
-    $setting = Join-Path $defaultRoot 'data-root'
-    if ([IO.File]::Exists($setting)) {
-        $saved = ([IO.File]::ReadAllText($setting) -split "`n", 2)[0].TrimEnd([char] 13)
+    $setting = Join-Path (Join-Path $LocalData 'AudayWorkflow') 'data-root'
+    if (-not [IO.File]::Exists($setting)) { return $null }
+    $saved = ([IO.File]::ReadAllText($setting) -split "`n", 2)[0].TrimEnd([char] 13)
+    if (-not $saved) { return $null }
+    return $saved
+}
+
+function New-AudayUnavailableRootDecision([string] $Saved, [string] $Visible) {
+    return [ordered] @{
+        ok = $false; error = 'saved_data_root_unavailable'
+        message = 'the saved archive location cannot be found; its drive may be disconnected'
+        needsUserDecision = $true; dataRoot = $Saved
+        choices = @(
+            [ordered] @{ choice = 'reconnect_and_retry'; detail = 'Reconnect the drive or folder, then repeat the same command.' },
+            [ordered] @{ choice = 'use_another_location'; detail = 'Start or select a library elsewhere: --home <absolute-path> data-root --save. A new location needs pairing and a first full sync; the old archive is left untouched.' },
+            [ordered] @{ choice = 'return_to_default_location'; detail = ('data-root --clear, then use ' + $Visible + '. It needs pairing and a first full sync unless a library is already there.') }
+        )
+    }
+}
+
+function Get-AudayDataRoot([string] $LocalData, [string] $Explicit, [string] $Visible) {
+    # Same order as scripts/data_root.py: --home, AUDAY_HOME, the saved one-line
+    # setting written by `data-root --save`, the earlier default location while it holds a
+    # paired profile and the visible default does not, then %USERPROFILE%\Auday.
+    if ($Explicit) { return [pscustomobject] @{ Root = $Explicit; Source = 'option'; Decision = $null } }
+    $fromEnvironment = [Environment]::GetEnvironmentVariable('AUDAY_HOME')
+    if ($fromEnvironment) { return [pscustomobject] @{ Root = $fromEnvironment; Source = 'environment'; Decision = $null } }
+    if ($LocalData) {
+        $appRoot = Join-Path $LocalData 'AudayWorkflow'
+        $saved = Get-AudaySavedRoot $LocalData
         if ($saved) {
             if (-not (Test-AudayAbsoluteWindowsPath $saved)) {
-                throw 'saved_data_root_must_be_absolute: run with --home and data-root --clear'
+                throw 'saved_data_root_must_be_absolute: run data-root --clear'
             }
             # A saved root existed when it was saved. If it is missing, its drive is
-            # probably disconnected; never create a new library at that path.
+            # probably disconnected: ask the user instead of starting a new library.
             if (-not [IO.Directory]::Exists($saved)) {
-                throw ('saved_data_root_unavailable: ' + $saved + '; reconnect its drive, or run with --home and data-root --clear')
+                return [pscustomobject] @{ Root = $saved; Source = 'saved'; Decision = (New-AudayUnavailableRootDecision $saved $Visible) }
             }
-            return $saved
+            return [pscustomobject] @{ Root = $saved; Source = 'saved'; Decision = $null }
+        }
+        if ((Test-AudayHasPairing $appRoot) -and -not (Test-AudayHasPairing $Visible)) {
+            return [pscustomobject] @{ Root = $appRoot; Source = 'legacy'; Decision = $null }
         }
     }
-    return $defaultRoot
+    if (-not $Visible) { return $null }
+    return [pscustomobject] @{ Root = $Visible; Source = 'default'; Decision = $null }
 }
 
 function Get-AudayArchitecture {
@@ -331,14 +374,46 @@ function Start-AudayBootstrap([string[]] $CommandArguments) {
         else { $forward.Add($option); $forward.Add($CommandArguments[$index + 1]) }
         $index += 2
     }
-    $dataRoot = Get-AudayDataRoot $localData $explicitRoot
-    $dataRootSource = 'default'
-    if ($explicitRoot) { $dataRootSource = 'option' }
-    elseif ([Environment]::GetEnvironmentVariable('AUDAY_HOME')) { $dataRootSource = 'environment' }
-    elseif ($localData -and $dataRoot -ne (Join-Path $localData 'AudayWorkflow')) { $dataRootSource = 'saved' }
-    if (-not $dataRoot) { throw 'local_application_data_directory_unavailable' }
+    if (($CommandArguments.Count - $index) -eq 2 -and $CommandArguments[$index] -eq 'data-root' -and
+            $CommandArguments[$index + 1] -eq '--clear') {
+        # Needs no runtime, so it still works while a saved root's drive is disconnected.
+        if ($localData) {
+            $setting = Join-Path (Join-Path $localData 'AudayWorkflow') 'data-root'
+            if ([IO.File]::Exists($setting)) { [IO.File]::Delete($setting) }
+        }
+        [Console]::Out.WriteLine((@{ ok = $true; savedDataRoot = $null;
+            nextStep = 'run data-root to see the location later commands use' } | ConvertTo-Json -Compress))
+        return 0
+    }
+    $visibleRoot = Get-AudayVisibleRoot
+    $resolved = Get-AudayDataRoot $localData $explicitRoot $visibleRoot
+    if (-not $resolved) { throw 'local_application_data_directory_unavailable' }
+    if ($resolved.Decision) {
+        [Console]::Out.WriteLine(($resolved.Decision | ConvertTo-Json -Compress -Depth 5))
+        return 1
+    }
+    $dataRoot = $resolved.Root
+    $dataRootSource = $resolved.Source
     if (-not (Test-AudayAbsoluteWindowsPath $dataRoot)) { throw 'home_must_be_an_absolute_directory_path' }
     $dataRoot = [IO.Path]::GetFullPath($dataRoot)
+    # Same rule as platform_utils.support_root: a root with its own runtime keeps
+    # it; the default and saved archive locations hold only the archive, with their
+    # runtimes, caches and models in the hidden application directory; a root given
+    # only through --home or AUDAY_HOME is self-contained.
+    $runtimeRoot = $dataRoot
+    if ($localData -and -not [IO.Directory]::Exists((Join-Path $dataRoot 'runtime'))) {
+        # Choosing an archive location never needs a runtime inside that location.
+        if ($index -lt $CommandArguments.Count -and $CommandArguments[$index] -eq 'data-root') {
+            $runtimeRoot = [IO.Path]::GetFullPath((Join-Path $localData 'AudayWorkflow'))
+        }
+        foreach ($candidate in @($visibleRoot, (Get-AudaySavedRoot $localData))) {
+            if ($candidate -and (Test-AudayAbsoluteWindowsPath $candidate) -and
+                    [string]::Equals([IO.Path]::GetFullPath($candidate).TrimEnd('\'), $dataRoot.TrimEnd('\'),
+                        [StringComparison]::OrdinalIgnoreCase)) {
+                $runtimeRoot = [IO.Path]::GetFullPath((Join-Path $localData 'AudayWorkflow'))
+            }
+        }
+    }
     if ($index -lt $CommandArguments.Count -and $CommandArguments[$index] -eq 'check') {
         if ($index + 1 -ne $CommandArguments.Count) { throw 'check_takes_no_arguments' }
         $memory = $null; $free = $null
@@ -346,6 +421,7 @@ function Start-AudayBootstrap([string[]] $CommandArguments) {
         try { $free = (New-Object IO.DriveInfo([IO.Path]::GetPathRoot($dataRoot))).AvailableFreeSpace } catch { }
         [Console]::Out.WriteLine((@{ ok = $true; windows = [Environment]::OSVersion.Version.ToString(); architecture = $architecture;
             memoryBytes = $memory; availableDiskBytes = $free; dataRoot = $dataRoot; dataRootSource = $dataRootSource;
+            runtimeRoot = $runtimeRoot;
             downloadsStarted = $false;
             nextStep = 'run bootstrap doctor to prepare the private base runtime' } | ConvertTo-Json -Compress))
         return 0
@@ -353,7 +429,9 @@ function Start-AudayBootstrap([string[]] $CommandArguments) {
     if ($index -eq $CommandArguments.Count) { $forward.Add('setup') }
     while ($index -lt $CommandArguments.Count) { $forward.Add($CommandArguments[$index]); $index++ }
     Assert-AudayOrdinaryPath $dataRoot
+    Assert-AudayOrdinaryPath $runtimeRoot
     [void] [IO.Directory]::CreateDirectory($dataRoot)
+    [void] [IO.Directory]::CreateDirectory($runtimeRoot)
     $assets = @(Import-Csv -LiteralPath (Join-Path $PSScriptRoot 'runtime-assets.tsv') -Delimiter "`t" | Where-Object {
         $_.component -eq 'uv' -and $_.architecture -eq $architecture -and $_.platform -eq 'windows'
     })
@@ -363,7 +441,7 @@ function Start-AudayBootstrap([string[]] $CommandArguments) {
         if ($asset.$name -cnotmatch '^[A-Za-z0-9_.-]+$' -or $asset.$name -in @('.', '..')) { throw 'invalid_runtime_manifest' }
     }
     if ($asset.archive_root -ne '.' -or $asset.archive_format -ne 'zip') { throw 'invalid_runtime_manifest' }
-    $uvDirectory = Join-Path $dataRoot ('runtime\' + $asset.install_dir)
+    $uvDirectory = Join-Path $runtimeRoot ('runtime\' + $asset.install_dir)
     $uv = Join-Path $uvDirectory $asset.executable
     $marker = Join-Path $uvDirectory '.auday-archive-sha256'
     Assert-AudayOrdinaryPath $uvDirectory
@@ -372,9 +450,9 @@ function Start-AudayBootstrap([string[]] $CommandArguments) {
             throw 'existing_runtime_incomplete: preserve it and use a new setup root'
         }
     } else {
-        $archive = Get-AudayVerifiedDownload $asset.url (Join-Path $dataRoot ('cache\downloads\' + $asset.sha256 + '.zip')) $asset.sha256 ([long] $asset.size)
-        [void] [IO.Directory]::CreateDirectory((Join-Path $dataRoot 'runtime'))
-        $stage = Join-Path $dataRoot ('runtime\.bootstrap-' + [Guid]::NewGuid().ToString('N'))
+        $archive = Get-AudayVerifiedDownload $asset.url (Join-Path $runtimeRoot ('cache\downloads\' + $asset.sha256 + '.zip')) $asset.sha256 ([long] $asset.size)
+        [void] [IO.Directory]::CreateDirectory((Join-Path $runtimeRoot 'runtime'))
+        $stage = Join-Path $runtimeRoot ('runtime\.bootstrap-' + [Guid]::NewGuid().ToString('N'))
         try {
             Expand-AudaySafeZip $archive $stage
             if (-not [IO.File]::Exists((Join-Path $stage $asset.executable))) { throw 'runtime_executable_missing_from_archive' }
@@ -382,7 +460,7 @@ function Start-AudayBootstrap([string[]] $CommandArguments) {
             [IO.Directory]::Move($stage, $uvDirectory)
         } finally { if ([IO.Directory]::Exists($stage)) { [IO.Directory]::Delete($stage, $true) } }
     }
-    $environment = Get-AudayPrivateEnvironment $dataRoot
+    $environment = Get-AudayPrivateEnvironment $runtimeRoot
     $pythonArchitecture = 'x86_64'
     $pythonPlatform = 'win-amd64'
     if ($architecture -eq 'arm64') { $pythonArchitecture = 'aarch64'; $pythonPlatform = 'win-arm64' }
@@ -396,7 +474,7 @@ function Start-AudayBootstrap([string[]] $CommandArguments) {
         if ($found.ExitCode -ne 0) { return $found.ExitCode }
     }
     $python = $found.Output.Trim()
-    $privatePython = [IO.Path]::GetFullPath((Join-Path $dataRoot 'runtime\python')).TrimEnd('\') + '\'
+    $privatePython = [IO.Path]::GetFullPath((Join-Path $runtimeRoot 'runtime\python')).TrimEnd('\') + '\'
     if (-not [IO.File]::Exists($python) -or -not [IO.Path]::GetFullPath($python).StartsWith($privatePython, [StringComparison]::OrdinalIgnoreCase)) {
         throw 'python_runtime_outside_private_setup'
     }

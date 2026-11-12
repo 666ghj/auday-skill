@@ -150,7 +150,7 @@ At completion, give a compact capability report in the user's language:
 - Transcription not installed yet, or the selected route verified with the speaker preference.
 - Phone paired and synced, or the remaining phone/system action.
 
-Show useful local output locations separately from progress. User data defaults to `~/Library/Application Support/AudayWorkflow/` on Mac and `%LOCALAPPDATA%\AudayWorkflow\` on Windows; each phone profile contains its persistent database and index. These are disk files the user can browse, not memory-only caches. To keep the lasting library in another location, save that root once with `data-root --save` (see [Connection](connection.md#data-root)); a one-off `--home` does not change later commands. For an isolated environment use `--home <absolute-data-root>` and, when needed, `--profile <name>`. Both are global options before the command, with `--home` first:
+Show useful local output locations separately from progress. The archive defaults to `~/Auday/` on Mac and `%USERPROFILE%\Auday\` on Windows; each phone profile contains its persistent database, readable `library/` files and index. These are disk files the user can browse, not memory-only caches. Runtimes and models stay in the hidden application directory. When the user wants the archive elsewhere, save that location once with `data-root --save` (see [Connection](connection.md#archive-location)); a one-off `--home` does not change later commands. Report the actual `dataRoot` from `status` rather than assuming the default. For an isolated environment use `--home <absolute-data-root>` and, when needed, `--profile <name>`. Both are global options before the command, with `--home` first:
 
 ```text
 <auday> --home "<absolute-data-root>" --profile <name> setup

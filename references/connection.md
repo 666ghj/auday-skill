@@ -57,17 +57,28 @@ The secret is shared by authorized clients. This version does not provide per-co
 
 `--home` and `--profile` are global options placed before the command, with `--home` first when both are provided. Use separate profiles for separate phones. Passwords are never command arguments. Existing integrations with an appropriate Python runtime may still invoke `auday.py` directly.
 
-### Data root
+### Archive location
 
-`--home` changes the data root for one command only. To keep the library somewhere else for every later command, for example in a workspace or a folder the user browses, save it once:
+Without any setting, the archive lives in a folder the user can open: `~/Auday` on Mac and `%USERPROFILE%\Auday` on Windows. It deliberately avoids Documents and Desktop, which iCloud or OneDrive often synchronize; a synchronized SQLite database can be damaged or evicted. Private runtimes, caches and models stay in the hidden application directory (`~/Library/Application Support/AudayWorkflow`, `%LOCALAPPDATA%\AudayWorkflow`), so the archive folder holds only phone profiles.
+
+When the user wants the archive elsewhere, such as a workspace or an external drive, save that location once:
 
 ```text
-<auday> --home "<absolute-data-root>" data-root --save
+<auday> --home "<absolute-archive-folder>" data-root --save
 ```
 
-Commands without `--home` then use, in order, the `AUDAY_HOME` environment variable, the saved setting, and the platform default. Both bootstrap entrypoints and `auday.py` follow the same order. `<auday> data-root` shows the active root, why it was chosen, and copies of the profile under other known roots; `data-root --clear` returns later commands to the default. `doctor` and `status` also report `dataRoot` and `dataRootSource`.
+Commands without `--home` use, in order, the `AUDAY_HOME` environment variable, the saved location, an existing archive at the earlier default location, then the visible default. Both bootstrap entrypoints and `auday.py` follow this order. `<auday> data-root` shows the active location (`dataRoot`), why it was chosen (`source`), where runtimes live (`runtimeRoot`), and copies of the profile at other known locations; `data-root --clear` returns to the default. `doctor` and `status` report `dataRoot` and `dataRootSource` as well. A saved location also holds only the archive. A root given only through `--home` or `AUDAY_HOME` is self-contained, which keeps isolated test environments separate; a root that already contains its own runtime keeps using it.
 
-A pairing belongs to its data root. A new, empty root needs pairing and a first full sync of its own; later syncs there are incremental. `pair` refuses to start an empty library while the same profile is already paired or synchronized under another known root (`AUDAY_HOME`, the saved setting, or the default). Select that root instead. Pass `--new-library` only when the user wants a separate library. If a saved root is missing, for example on a disconnected drive, commands stop instead of creating a new library at that path.
+Installations from before this change kept the archive in the hidden application directory. While that location holds a paired profile and the visible folder does not, commands keep using it (`dataRootSource: "legacy"`), so an upgrade never starts an empty library. Tell the user where the archive is. Moving it is a separate choice: a new location needs pairing and a first full sync.
+
+A pairing belongs to its location. A new, empty location needs pairing and a first full sync of its own; later syncs there are incremental.
+
+### Decisions for the user
+
+Some results carry `"needsUserDecision": true` with `choices`. Stop, explain the situation in the user's language, present the choices with their consequences, and wait for the answer. Never pick one yourself, and never pass `--new-library` or clear a setting on the user's behalf.
+
+- `saved_data_root_unavailable`: the saved archive location cannot be found, usually because its drive is disconnected. Nothing is created at that path. Ask whether to reconnect and retry, use another location (`--home <path> data-root --save`), or return to the default (`data-root --clear`). A new location needs pairing and a first full sync; the old archive stays where it is and can be selected again later with `--home <that path> data-root --save`. `data-root --clear` works without the missing drive or a runtime.
+- `another_library_exists` (from `pair` or `pair-window`) or `not_paired_here` (from `sync`): this phone profile already has a library at another location (`otherLibraries`). Ask whether to keep using it (`--home <that dataRoot> data-root --save`) or start a separate library here (repeat with `--new-library`, then a first full sync).
 
 The default keyword search combines whitespace-separated terms with AND and supports substring matching. It is distinct from the [local semantic mode](semantic-search.md), selected with `search --mode semantic` after preparing the local model and index. Keyword results carry `syncedAt`; use `nextOffset` with `--offset` to continue. `--date` matches a record's preserved ISO date, not a reconstructed date in the computer's current time zone. Some derived records lack `start`, so browse by kind or follow their sources.
 
@@ -106,9 +117,8 @@ With a compatible phone, the audio catalogue is lightweight: the `audio` command
 | --- | --- |
 | `not_paired` or missing OS credential | Start the local pairing prompt |
 | `awaiting_phone_or_wrong_password` | Check the active phone page, reachable LAN, local-network permission, and matching password; do not retry without a bound |
-| `another_library_exists` | This profile is already paired or synchronized under the reported data root. Use that root; pass `--new-library` only when the user wants a separate library |
-| `not_paired_here` | This data root is not paired, but the profile already has a library under the reported root. Select that root instead of pairing again |
-| `saved_data_root_unavailable` | Reconnect the drive holding the saved root. Clear the setting with `--home <root> data-root --clear` only with the user's agreement |
+| `another_library_exists` or `not_paired_here` | Ask the user; see [Decisions for the user](#decisions-for-the-user) |
+| `saved_data_root_unavailable` | Ask the user; see [Decisions for the user](#decisions-for-the-user) |
 | `snapshot_changed` | The incomplete snapshot was not committed; sync the current snapshot once |
 | `snapshot_busy` | Other transfers hold the phone's retained snapshots; let them finish, then retry the requested update once |
 | `snapshot_preparation_failed` | Inspect the phone's preparation message; retry sync once after resolving it |
@@ -126,7 +136,7 @@ The cache is a persistent SQLite file, with `default` as the normal profile:
 
 | Host | Default database |
 | --- | --- |
-| Mac | `~/Library/Application Support/AudayWorkflow/<profile>/library.sqlite` |
-| Windows | `%LOCALAPPDATA%\AudayWorkflow\<profile>\library.sqlite` |
+| Mac | `~/Auday/<profile>/library.sqlite` |
+| Windows | `%USERPROFILE%\Auday\<profile>\library.sqlite` |
 
-A saved or `AUDAY_HOME` [data root](#data-root) replaces the `AudayWorkflow` directory in these paths. It survives closing the agent or restarting the computer. Every successful sync also updates the profile's [maintained file library](library.md) in `library/`. `libraryStatus` reports this stage separately: a failed file refresh does not undo the verified SQLite sync. Run `<auday> library` to refresh the files from the saved database without contacting the phone. Downloaded audio remains in the profile's `audio/` directory. Resolve and show the actual local path when the user wants to browse it. The [readable export workflow](context.md#readable-files) remains available for separate static snapshots.
+A saved or `AUDAY_HOME` [location](#archive-location) replaces the `Auday` folder in these paths; an upgraded installation may still use the earlier location reported by `status`. It survives closing the agent or restarting the computer. Every successful sync also updates the profile's [maintained file library](library.md) in `library/`. `libraryStatus` reports this stage separately: a failed file refresh does not undo the verified SQLite sync. Run `<auday> library` to refresh the files from the saved database without contacting the phone. Downloaded audio remains in the profile's `audio/` directory. Resolve and show the actual local path when the user wants to browse it. The [readable export workflow](context.md#readable-files) remains available for separate static snapshots.

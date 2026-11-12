@@ -40,6 +40,7 @@ For each platform, replace `<auday>` below with its full bootstrap prefix and `-
 Verify the following without reading personal Auday data:
 
 - `check` succeeds without Python, does not download, and reports capability prerequisites.
+- Without `--home` and with an empty user home, `check` reports `~/Auday` (`%USERPROFILE%\Auday`) as the default archive location, `doctor` installs runtimes only in the hidden application directory, a saved location is followed by later commands, and a disconnected saved location returns a user decision without recreating it. `tools/check_clean_setup.py` verifies this sequence.
 - The first real setup obtains private `uv` and managed Python under the isolated data root. It does not depend on a global Python, Homebrew, WSL, MSVC installation, or pre-existing model paths.
 - A new installation shows the semantic recommendation and the expected unpaired/empty-library state.
 - Deferring semantic setup records the choice; another setup invocation respects it without downloading weights or repeating the recommendation. A later explicit semantic request still works.

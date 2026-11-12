@@ -86,10 +86,10 @@ Agent 可以用关键词查找原词，也可以用[本地语义检索](referenc
 
 | 操作系统 | 默认数据库路径 |
 | --- | --- |
-| Windows | `%LOCALAPPDATA%\AudayWorkflow\default\library.sqlite` |
-| Mac | `~/Library/Application Support/AudayWorkflow/default/library.sqlite` |
+| Windows | `%USERPROFILE%\Auday\default\library.sqlite` |
+| Mac | `~/Auday/default/library.sqlite` |
 
-如需保存到其他位置，可用 `data-root --save` 一次性设定数据目录，之后的命令都会使用它。
+档案文件夹可以直接打开查看，其中 `library/` 是可阅读的 Markdown 档案。如需保存到其他位置（例如外接硬盘），可用 `data-root --save` 一次性设定，之后的命令都会使用它。运行环境和模型保存在隐藏的应用目录中；旧版本的安装会继续使用原来的位置。
 
 模型、配置和索引也保存在本机。先同步文字，需要时再获取音频。关闭接入可以阻止后续读取，但无法收回其他设备已经下载的副本。
 

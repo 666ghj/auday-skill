@@ -1294,6 +1294,7 @@ def main():
                 "liveConnectionSupported": sys.platform in ("darwin", "win32"),
                 "dataRoot": str(args.home.expanduser().resolve()),
                 "dataRootSource": home_source,
+                "runtimeRoot": str(data_root.support_root(args.home)),
                 "capabilities": setup_status(args.home, args.profile),
             }
         )
@@ -1417,8 +1418,16 @@ def main():
             if not (app.root / "connection.json").exists():
                 others = data_root.other_libraries(args.home, args.profile)
                 if others:
-                    raise ValueError("not_paired_here: this profile already has a library under " + others[0]["dataRoot"]
-                                     + "; run data-root to choose that data root instead of pairing again")
+                    raise data_root.DecisionRequired(
+                        "not_paired_here", "this location is not paired, but this phone profile has a library elsewhere",
+                        dataRoot=str(app.root.parent), otherLibraries=others,
+                        choices=[
+                            {"choice": "use_existing_library",
+                             "detail": "--home <that dataRoot> data-root --save, then sync there."},
+                            {"choice": "start_separate_library",
+                             "detail": "pair-window ... --new-library here, then sync; the first sync is full."},
+                        ],
+                    )
             dump(app.sync(mode=args.mode))
         elif args.command == "library":
             dump(app.library(language=args.language))
@@ -1458,6 +1467,9 @@ def main():
 if __name__ == "__main__":
     try:
         main()
+    except data_root.DecisionRequired as decision:
+        dump(decision.payload())
+        sys.exit(1)
     except (ValueError, KeyError, OSError, RuntimeError, sqlite3.Error, subprocess.SubprocessError) as error:
         dump({"ok": False, "error": str(error)})
         sys.exit(1)

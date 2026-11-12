@@ -1,23 +1,50 @@
-"""Where this computer keeps Auday data: one answer for every entrypoint.
+"""Where this computer keeps the Auday archive: one answer for every entrypoint.
 
-A command uses, in order: an explicit --home, the AUDAY_HOME environment
-variable, the saved data-root setting, then the platform default. bootstrap.sh
-and bootstrap.ps1 apply the same order before Python exists; keep all three in
-step. The setting is one line, an absolute path, in `<platform default>/data-root`.
+A command uses, in order:
+
+1. an explicit --home;
+2. the AUDAY_HOME environment variable;
+3. the saved data-root setting (`data-root --save`);
+4. the earlier default location, while it holds a paired profile and the visible
+   default does not, so an upgrade never strands an existing archive;
+5. the visible default, `~/Auday` (`%USERPROFILE%\\Auday` on Windows).
+
+bootstrap.sh and bootstrap.ps1 apply the same order before Python exists; keep
+all three in step. The setting is one line, an absolute path, stored in the
+hidden application directory as `data-root`. Runtimes, caches and models of the
+visible default stay in that hidden directory (see platform_utils.support_root).
 """
 
 import os
 from pathlib import Path
 import sqlite3
 
-from platform_utils import default_home, secure_directory
+from platform_utils import default_home, secure_directory, support_root, visible_home
 
 ENVIRONMENT_VARIABLE = "AUDAY_HOME"
 SETTING_NAME = "data-root"
 
 
+class DecisionRequired(ValueError):
+    """Stop and let the user choose; never pick one of these paths for them."""
+
+    def __init__(self, code, message, **details):
+        super().__init__(code + ": " + message)
+        self.code = code
+        self.message = message
+        self.details = details
+
+    def payload(self):
+        return {"ok": False, "error": self.code, "message": self.message,
+                "needsUserDecision": True, **self.details}
+
+
+def application_home():
+    return default_home()
+
+
 def setting_path():
-    return default_home() / SETTING_NAME
+    return application_home() / SETTING_NAME
 
 
 def _absolute(value, error):
@@ -25,6 +52,10 @@ def _absolute(value, error):
     if not path.is_absolute():
         raise ValueError(error)
     return path
+
+
+def _canonical(path):
+    return Path(path).expanduser().resolve()
 
 
 def environment_home():
@@ -42,6 +73,40 @@ def saved_home():
     return _absolute(value, "saved_data_root_must_be_absolute_run_data_root_clear") if value else None
 
 
+def has_pairing(root):
+    """Any profile directory under root that completed pairing."""
+    try:
+        return any((child / "connection.json").is_file() for child in Path(root).iterdir() if child.is_dir())
+    except OSError:
+        return False
+
+
+def legacy_home():
+    """The earlier default archive location, when it is still the one in use."""
+    legacy = application_home()
+    if has_pairing(legacy) and not has_pairing(visible_home()):
+        return legacy
+    return None
+
+
+def unavailable_saved_root(saved):
+    return DecisionRequired(
+        "saved_data_root_unavailable",
+        "the saved archive location cannot be found; its drive may be disconnected",
+        dataRoot=str(saved),
+        choices=[
+            {"choice": "reconnect_and_retry",
+             "detail": "Reconnect the drive or folder, then repeat the same command."},
+            {"choice": "use_another_location",
+             "detail": "Start or select a library elsewhere: --home <absolute-path> data-root --save. "
+                       "A new location needs pairing and a first full sync; the old archive is left untouched."},
+            {"choice": "return_to_default_location",
+             "detail": "data-root --clear, then use " + str(visible_home())
+                       + ". It needs pairing and a first full sync unless a library is already there."},
+        ],
+    )
+
+
 def configured_home():
     """The root a command without --home uses, and where that choice came from."""
     environment = environment_home()
@@ -52,14 +117,12 @@ def configured_home():
         # A saved root always existed when it was saved. If it is gone, its drive
         # is probably disconnected: never start a new library at that path.
         if not saved.is_dir():
-            raise ValueError("saved_data_root_unavailable: " + str(saved)
-                             + "; reconnect its drive, or run with --home and data-root --clear")
+            raise unavailable_saved_root(saved)
         return saved, "saved"
-    return default_home(), "default"
-
-
-def _canonical(path):
-    return Path(path).expanduser().resolve()
+    legacy = legacy_home()
+    if legacy is not None:
+        return legacy, "legacy"
+    return visible_home(), "default"
 
 
 def resolve_home(explicit=None):
@@ -80,10 +143,12 @@ def save_home(home):
     home = _canonical(home)
     if any(ord(character) < 32 or ord(character) == 127 for character in str(home)):
         raise ValueError("data_root_must_not_contain_control_characters")
-    if home == _canonical(default_home()):
+    if home == _canonical(visible_home()) and legacy_home() is None:
         clear_home()
         return
-    secure_directory(default_home())
+    # The saved location exists from now on; a later absence means a disconnected drive.
+    secure_directory(home)
+    secure_directory(application_home())
     target = setting_path()
     temporary = target.with_name(SETTING_NAME + ".tmp")
     temporary.write_bytes((str(home) + "\n").encode("utf-8"))
@@ -121,23 +186,27 @@ def profile_state(root):
     return {"paired": paired, "synchronized": synchronized}
 
 
-def other_libraries(home, profile):
-    """Paired or synchronized copies of this profile under the other roots this
-    computer knows about: AUDAY_HOME, the saved setting and the platform default."""
-    current = _canonical(home)
+def known_roots():
     roots = []
-    for find in (environment_home, saved_home, default_home):
+    for find in (environment_home, saved_home, visible_home, application_home):
         try:
             value = find()
         except ValueError:
             continue
-        if value is None:
-            continue
-        root = _canonical(value)
-        if root != current and root not in roots:
-            roots.append(root)
+        if value is not None and _canonical(value) not in roots:
+            roots.append(_canonical(value))
+    return roots
+
+
+def other_libraries(home, profile):
+    """Paired or synchronized copies of this profile under the other roots this
+    computer knows about: AUDAY_HOME, the saved setting, the visible default and
+    the earlier default location."""
+    current = _canonical(home)
     found = []
-    for root in roots:
+    for root in known_roots():
+        if root == current:
+            continue
         state = profile_state(root / profile)
         if state["paired"] or state["synchronized"]:
             found.append({"dataRoot": str(root), "profile": profile, **state})
@@ -145,7 +214,7 @@ def other_libraries(home, profile):
 
 
 def ensure_single_library(home, profile, allow_new=False):
-    """Refuse to start an empty library while this profile already lives elsewhere."""
+    """Ask before starting an empty library while this profile already lives elsewhere."""
     if allow_new:
         return
     state = profile_state(_canonical(home) / profile)
@@ -153,27 +222,41 @@ def ensure_single_library(home, profile, allow_new=False):
         return
     others = other_libraries(home, profile)
     if others:
-        raise ValueError(
-            "another_library_exists: " + others[0]["dataRoot"]
-            + " already holds this profile; run data-root to choose it, or pass --new-library to start a separate library here"
+        raise DecisionRequired(
+            "another_library_exists",
+            "this phone profile already has a library at another location",
+            dataRoot=str(_canonical(home)), otherLibraries=others,
+            choices=[
+                {"choice": "use_existing_library",
+                 "detail": "--home <that dataRoot> data-root --save, then continue there; "
+                           "its pairing and synchronized records are kept."},
+                {"choice": "start_separate_library",
+                 "detail": "Repeat the command with --new-library. It needs pairing and a first full sync; "
+                           "the existing library is not changed."},
+            ],
         )
 
 
 def describe(home, source, profile):
-    later, later_source = configured_home()
+    try:
+        later, later_source = configured_home()
+        without_home = {"dataRoot": str(_canonical(later)), "source": later_source}
+    except DecisionRequired as error:
+        without_home = {"dataRoot": error.details["dataRoot"], "source": "saved",
+                        "error": error.code}
     try:
         saved = saved_home()
     except ValueError:
         saved = None
-    environment = os.environ.get(ENVIRONMENT_VARIABLE) or None
     return {
         "dataRoot": str(_canonical(home)),
         "source": source,
         "profile": profile,
         "profileState": profile_state(_canonical(home) / profile),
-        "withoutHomeOption": {"dataRoot": str(_canonical(later)), "source": later_source},
+        "runtimeRoot": str(support_root(home)),
+        "withoutHomeOption": without_home,
         "savedDataRoot": str(saved) if saved else None,
-        "environmentDataRoot": environment,
-        "defaultDataRoot": str(_canonical(default_home())),
+        "environmentDataRoot": os.environ.get(ENVIRONMENT_VARIABLE) or None,
+        "defaultDataRoot": str(_canonical(visible_home())),
         "otherLibraries": other_libraries(home, profile),
     }

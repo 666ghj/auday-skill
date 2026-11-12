@@ -16,11 +16,45 @@ def is_windows():
 
 
 def default_home():
+    """Hidden per-user application directory: runtimes, caches, models and the
+    saved data-root setting. Earlier versions also kept archives here."""
     if is_windows():
         local = os.environ.get("LOCALAPPDATA")
         return (Path(local) if local else Path.home() / "AppData" / "Local") / "AudayWorkflow"
     return Path.home() / "Library" / "Application Support" / "AudayWorkflow"
 
+
+def visible_home():
+    """Default archive location the user can find: a folder in their home
+    directory, outside Documents/Desktop folders that iCloud or OneDrive often sync."""
+    return Path.home() / "Auday"
+
+
+def saved_data_root():
+    """The archive location saved by `data-root --save`, if any (unvalidated)."""
+    try:
+        value = (default_home() / "data-root").read_text(encoding="utf-8-sig").split("\n", 1)[0].rstrip("\r")
+    except OSError:
+        return None
+    return Path(value) if value and Path(value).is_absolute() else None
+
+
+def support_root(root):
+    """Where a data root keeps runtimes, caches and models.
+
+    A root that already has its own runtime keeps using it (earlier custom
+    roots and isolated test roots). Otherwise the default and saved archive
+    locations hold only the archive, and their machinery stays in the hidden
+    application directory. A root given only through --home or AUDAY_HOME is
+    self-contained. Applying this twice gives the same result.
+    """
+    resolved = Path(root).expanduser().resolve()
+    if (resolved / "runtime").is_dir() or resolved == default_home().expanduser().resolve():
+        return resolved
+    archives = [visible_home(), saved_data_root()]
+    if any(path is not None and resolved == path.expanduser().resolve() for path in archives):
+        return default_home().expanduser().resolve()
+    return resolved
 
 def venv_python(directory):
     return Path(directory) / ("Scripts/python.exe" if is_windows() else "bin/python")

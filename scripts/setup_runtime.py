@@ -20,6 +20,7 @@ import urllib.error
 import urllib.request
 import zipfile
 
+from platform_utils import support_root
 from progress import report
 from windows_architecture import native_architecture as windows_native_architecture
 
@@ -350,7 +351,7 @@ def extract_zip(archive, destination):
         raise
 
 def install_runtime(root, component):
-    root = Path(root).expanduser().resolve()
+    root = support_root(root)
     asset = runtime_asset(component)
     require_supported_system(asset["min_macos"])
     destination = root / "runtime" / asset["install_dir"]
@@ -396,7 +397,7 @@ def ensure_uv(root):
 
 
 def managed_env(root):
-    root = Path(root).expanduser().resolve()
+    root = support_root(root)
     environment = {
         key: value for key, value in os.environ.items()
         if not key.upper().startswith(("UV_", "PIP_")) and key.upper() not in
@@ -427,7 +428,7 @@ def ensure_python(root, uv_path=None):
         env=environment, capture_output=True, text=True, check=True, timeout=60,
     )
     executable = Path(result.stdout.strip()).resolve()
-    if not executable.is_file() or not executable.is_relative_to((Path(root) / "runtime/python").resolve()):
+    if not executable.is_file() or not executable.is_relative_to(support_root(root) / "runtime/python"):
         raise ValueError("python_runtime_outside_private_setup")
     probe = f"import ssl,sqlite3,sys; assert sys.version_info[:3] == {tuple(map(int, version.split('.')))!r}"
     if sys.platform == "win32":
@@ -460,7 +461,7 @@ def command_line_tools_status():
 
 
 def windows_link_python(root):
-    return Path(root).expanduser().resolve() / "runtime/windows-link/venv/Scripts/python.exe"
+    return support_root(root) / "runtime/windows-link/venv/Scripts/python.exe"
 
 
 def ensure_windows_link(root, uv_path=None, python_path=None):
@@ -469,7 +470,7 @@ def ensure_windows_link(root, uv_path=None, python_path=None):
         raise ValueError("windows_link_runtime_requires_windows")
     from platform_utils import exclusive_file_lock, secure_directory
 
-    root = Path(root).expanduser().resolve()
+    root = support_root(root)
     architecture = host_architecture()
     secure_directory(root)
     requirements = HERE / "requirements-windows-link.txt"

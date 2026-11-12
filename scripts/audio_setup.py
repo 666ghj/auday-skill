@@ -14,14 +14,14 @@ import time
 from datetime import datetime, timezone
 
 from progress import report
-from platform_utils import start_process, stop_process, venv_python
+from platform_utils import start_process, stop_process, support_root, venv_python
 
 SCRIPT_ROOT = Path(__file__).resolve().parent
 MANIFEST = json.loads((SCRIPT_ROOT / "audio-assets.json").read_text(encoding="utf-8"))
 
 
 def _paths(root):
-    root = Path(root).expanduser().resolve()
+    root = support_root(root)
     runtime = root / "runtime" / "audio"
     return root, runtime, root / "models" / "audio"
 
