@@ -1,11 +1,13 @@
 """Synthetic contract tests for manifest-based, snapshot-bound text updates."""
 
 import base64
+from contextlib import closing
 import copy
 import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 import unittest
@@ -13,6 +15,7 @@ from unittest.mock import patch
 import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+import managed_library
 from auday import Auday
 
 
@@ -233,6 +236,58 @@ class IncrementalSyncTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "record_not_found"):
             self.app.read("removed")
         self.assertFalse(self.peer.leases)
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows extended-length paths")
+    def test_windows_sync_publishes_and_recovers_markdown_with_long_archive_paths(self):
+        parent = Path(tempfile.mkdtemp(prefix="auday-long-path-synthetic-")).resolve()
+        extended_parent = Path("\\\\?\\" + str(parent))
+        self.addCleanup(shutil.rmtree, extended_parent)
+        data_root = parent / ("x" * max(1, 140 - len(str(parent))))
+        extended_root = extended_parent / data_root.name / "default" / "library"
+        initial = [record("changed"), record("removed"), record("edited")]
+        peer = IncrementalPeer(initial)
+        with closing(Auday(data_root, transport=peer)) as app:
+            self.assertEqual(app.sync()["libraryStatus"], "ready")
+            library = app.root / "library"
+            manifest_path = extended_root / "manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            paths = {entry["id"]: entry["path"] for entry in manifest["records"]}
+            before = (extended_root / paths["changed"]).read_bytes()
+            removed = (extended_root / paths["removed"]).read_bytes()
+            (extended_root / paths["edited"]).write_bytes(b"Local edit to keep")
+            note = extended_root / "notes" / "note.md"
+            note.write_bytes(b"Independent note")
+
+            peer.publish([record("changed", "Updated source"), record("edited"), record("new")])
+            updated = app.sync()
+            self.assertEqual(updated["effectiveMode"], "incremental")
+            self.assertEqual(updated["libraryStatus"], "ready", updated.get("libraryError"))
+            self.assertFalse((extended_root / paths["removed"]).exists())
+            archived = list((extended_root / "archive").rglob("*.md"))
+            self.assertTrue(any(len(str(library / path.relative_to(extended_root))) >= 260 for path in archived))
+            archive_contents = [path.read_bytes() for path in archived]
+            self.assertIn(before, archive_contents)
+            self.assertIn(removed, archive_contents)
+            self.assertIn(b"Local edit to keep", [path.read_bytes() for path in
+                                                (extended_root / "conflicts").rglob("*.md")])
+
+            peer.publish([record("changed", "Recovered source"), record("new")])
+            with patch.object(managed_library, "_preserve",
+                              side_effect=OSError("synthetic publication interruption")):
+                self.assertEqual(app.sync()["libraryStatus"], "failed")
+            self.assertEqual(json.loads(manifest_path.read_text(encoding="utf-8"))["snapshot"],
+                             updated["snapshot"])
+            self.assertTrue((extended_root / ".pending" / "plan.json").is_file())
+            request_count = len(peer.calls)
+            self.assertTrue(app.library()["recoveredInterruptedUpdate"])
+            self.assertEqual(len(peer.calls), request_count)
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            self.assertEqual(manifest["snapshot"], peer.snapshot)
+            self.assertFalse((extended_root / ".pending").exists())
+            self.assertEqual(note.read_bytes(), b"Independent note")
+            self.assertIn(b"Recovered source", (extended_root / paths["changed"]).read_bytes())
+            for relative, digest in manifest["files"].items():
+                self.assertEqual(hashlib.sha256((extended_root / relative).read_bytes()).hexdigest(), digest)
 
     def test_wire_hashes_survive_reopen_without_rehashing_reserialized_json(self):
         self.app.sync()

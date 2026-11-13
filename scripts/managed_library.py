@@ -17,7 +17,7 @@ import tempfile
 import uuid
 
 from library_export import literal_block, record_day
-from platform_utils import exclusive_file_lock, secure_directory
+from platform_utils import exclusive_file_lock, is_windows, secure_directory
 
 
 SCHEMA_VERSION = 1
@@ -257,7 +257,21 @@ def _group_index(day, kind, entries, language):
         lines.append(f"| {_markdown_text(start)} | [{_markdown_text(title)}]({name}) |")
     return ("\n".join(lines) + "\n").encode("utf-8")
 
+def _windows_extended_path(path):
+    # Call only with an absolute, checked path under the resolved library root.
+    value = str(path)
+    if value.startswith("\\\\?\\"):
+        return path
+    if value.startswith("\\\\"):
+        return Path("\\\\?\\UNC\\" + value[2:])
+    return Path("\\\\?\\" + value)
+
+
 def _preserve(root, relative, category, transaction, digest):
+    # Archive and conflict paths add a transaction directory and two suffixes.
+    # Check and move both paths in extended-length form even when Windows long paths are disabled.
+    if is_windows():
+        root = _windows_extended_path(root)
     source = _path(root, relative)
     # Move the original inode instead of copying and then deleting it. Edits
     # through an already-open file handle therefore remain in the saved copy.
