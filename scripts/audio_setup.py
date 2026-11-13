@@ -239,16 +239,27 @@ def _prepare_mac_whisper(runtime, source, python, env, log):
     build = runtime / ("build-" + source_asset["revision"])
     whisper = build / "bin" / "whisper-cli"
     if not whisper.is_file():
-        _command(
-            [cmake, "-S", source, "-B", build, "-G", "Unix Makefiles",
-             "-DCMAKE_MAKE_PROGRAM=/usr/bin/make",
-             "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_SHARED_LIBS=OFF",
-             "-DWHISPER_BUILD_TESTS=OFF", "-DWHISPER_BUILD_EXAMPLES=ON",
-             "-DGGML_METAL=ON", "-DGGML_METAL_EMBED_LIBRARY=ON",
-             "-DGGML_OPENMP=OFF",
-             "-DCMAKE_IGNORE_PREFIX_PATH=/opt/homebrew;/usr/local"],
-            log, native_env, "Configuring Whisper.cpp with Apple tools",
-        )
+        configure = [
+            cmake, "-S", source, "-B", build, "-G", "Unix Makefiles",
+            "-DCMAKE_MAKE_PROGRAM=/usr/bin/make",
+            "-DCMAKE_BUILD_TYPE=Release", "-DBUILD_SHARED_LIBS=OFF",
+            "-DWHISPER_BUILD_TESTS=OFF", "-DWHISPER_BUILD_EXAMPLES=ON",
+            "-DGGML_METAL=ON", "-DGGML_METAL_EMBED_LIBRARY=ON",
+            "-DGGML_OPENMP=OFF",
+            "-DCMAKE_IGNORE_PREFIX_PATH=/opt/homebrew;/usr/local",
+        ]
+        if platform.machine() == "arm64":
+            # By default ggml tunes the CPU code to the build machine with
+            # -mcpu=native and a probe per feature. On a virtual Apple Silicon Mac
+            # that is wrong twice: Apple clang 17 resolves "native" to a newer CPU
+            # than the guest (apple-m3 on a virtual M1), and when the probe then
+            # switches off i8mm, which the guest cannot run, the compiler keeps its
+            # macro defined and the build fails. Without native tuning no CPU flag
+            # is passed, so the compiler's default applies: the Apple Silicon
+            # baseline (apple-m1), which every supported Mac runs. Inference itself
+            # runs on Metal.
+            configure.append("-DGGML_NATIVE=OFF")
+        _command(configure, log, native_env, "Configuring Whisper.cpp with Apple tools")
         _command(
             [cmake, "--build", build, "--config", "Release",
              "--target", "whisper-cli", "-j", str(min(4, os.cpu_count() or 2))],
