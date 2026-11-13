@@ -162,3 +162,42 @@ prompts, phone background behavior, and personal-audio accuracy remain separate
 checks. Windows `turbo` was not exercised; the recorded inference preset is
 `small`. The pinned ARM64 semantic engine targets ARMv8.7-A, so a successful
 hosted run does not establish support for every older ARM64 processor.
+
+## Skill 0.8.0: visible archive location and one persistent data root
+
+Validated on 2026-11-13 at commit `e333bb6e83bd70141431db24ff1a46f826a6dc28`.
+The commit that sets this version number changes only `VERSION` and this file.
+
+Hosted runs on that commit:
+
+- [Validate](https://github.com/666ghj/auday-skill/actions/runs/43373868596):
+  the unit, installation and encrypted transport tests passed on `macos-15`,
+  `windows-2025` x64 and `windows-11-arm`.
+- [Clean first-run setup](https://github.com/666ghj/auday-skill/actions/runs/43373881709):
+  passed on `macos-15` arm64 with the turbo model (351.5 seconds) and on
+  `macos-15-intel` with the small model (279.8 seconds).
+- [Windows clean acceptance](https://github.com/666ghj/auday-skill/actions/runs/43374978616):
+  passed on x64 (100.7 seconds) and ARM64 (221.3 seconds) with the small model.
+
+Durations are observations on hosted machines, not user-device estimates.
+
+In addition to the earlier checks, each clean run verified the default archive
+location from an empty user home, without `--home`:
+
+1. `check` reported `~/Auday` (`%USERPROFILE%\Auday`) and created nothing.
+2. `doctor` installed runtimes only in the hidden application directory; the
+   archive folder held the phone profile alone.
+3. Saving another location through the `--profile` form left that folder empty
+   of runtimes, and later commands used it.
+4. Removing the saved folder returned `saved_data_root_unavailable` with
+   `needsUserDecision`, and nothing was recreated at that path.
+5. `data-root --clear` returned later commands to the default location.
+
+The Apple Silicon run also covers the audio build fix: the pinned Whisper.cpp
+is configured without machine-specific CPU tuning, which previously failed on
+that virtual runner.
+
+The wire protocol is unchanged from 0.7.0. Phones that do not advertise
+incremental records, snapshot leases or large audio chunks keep their
+fallbacks, covered by the synthetic-peer tests in the Validate run. No
+physical phone was used for this validation.
