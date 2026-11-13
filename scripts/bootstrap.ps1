@@ -396,12 +396,13 @@ function Start-AudayBootstrap([string[]] $CommandArguments) {
     $dataRootSource = $resolved.Source
     if (-not (Test-AudayAbsoluteWindowsPath $dataRoot)) { throw 'home_must_be_an_absolute_directory_path' }
     $dataRoot = [IO.Path]::GetFullPath($dataRoot)
-    # Same rule as platform_utils.support_root: a root with its own runtime keeps
-    # it; the default and saved archive locations hold only the archive, with their
-    # runtimes, caches and models in the hidden application directory; a root given
-    # only through --home or AUDAY_HOME is self-contained.
+    # Where runtimes, caches and models live. A root with its own Python runtime
+    # keeps it; the default and saved archive locations hold only the archive, with
+    # their machinery in the hidden application directory; a root given only through
+    # --home or AUDAY_HOME is self-contained. The client receives this decision in
+    # AUDAY_RUNTIME_ROOT (platform_utils.support_root) instead of deriving it again.
     $runtimeRoot = $dataRoot
-    if ($localData -and -not [IO.Directory]::Exists((Join-Path $dataRoot 'runtime'))) {
+    if ($localData -and -not [IO.Directory]::Exists((Join-Path $dataRoot 'runtime\python'))) {
         # Choosing an archive location never needs a runtime inside that location.
         if ($index -lt $CommandArguments.Count -and $CommandArguments[$index] -eq 'data-root') {
             $runtimeRoot = [IO.Path]::GetFullPath((Join-Path $localData 'AudayWorkflow'))
@@ -461,6 +462,7 @@ function Start-AudayBootstrap([string[]] $CommandArguments) {
         } finally { if ([IO.Directory]::Exists($stage)) { [IO.Directory]::Delete($stage, $true) } }
     }
     $environment = Get-AudayPrivateEnvironment $runtimeRoot
+    $environment['AUDAY_RUNTIME_ROOT'] = $runtimeRoot
     $pythonArchitecture = 'x86_64'
     $pythonPlatform = 'win-amd64'
     if ($architecture -eq 'arm64') { $pythonArchitecture = 'aarch64'; $pythonPlatform = 'win-arm64' }
@@ -482,8 +484,7 @@ function Start-AudayBootstrap([string[]] $CommandArguments) {
     $probe = "import ssl,sqlite3,sys,sysconfig; assert sys.version_info[:3] == (3,13,16); assert ssl.HAS_PSK; assert hasattr(ssl.SSLContext, 'set_psk_client_callback'); assert sysconfig.get_platform().lower() == '$pythonPlatform', 'native_python_architecture_required'"
     $checked = Invoke-AudayProcess $python @('-I', '-c', $probe) $environment -TimeoutSeconds 30
     if ($checked.ExitCode -ne 0) { return $checked.ExitCode }
-    $cliArguments = @((Join-Path $PSScriptRoot 'bootstrap_windows.py'), '--runtime-root', $runtimeRoot,
-        '--home', $dataRoot) + $forward.ToArray()
+    $cliArguments = @((Join-Path $PSScriptRoot 'bootstrap_windows.py'), '--home', $dataRoot) + $forward.ToArray()
     $finished = Invoke-AudayProcess $python $cliArguments $environment -TimeoutSeconds 0
     return $finished.ExitCode
 }

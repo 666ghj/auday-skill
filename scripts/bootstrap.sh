@@ -21,7 +21,17 @@ if [ "${1-}" = "--home" ]; then
     auday_explicit_root=$2
     shift 2
 fi
-if [ "$#" -eq 2 ] && [ "$1" = data-root ] && [ "$2" = --clear ]; then
+# The command follows an optional --profile <name>, as in bootstrap.ps1.
+if [ "${1-}" = "--profile" ] && [ "$#" -ge 3 ]; then
+    auday_command=$3
+    auday_command_option=${4-}
+    auday_command_words=$(($# - 2))
+else
+    auday_command=${1-}
+    auday_command_option=${2-}
+    auday_command_words=$#
+fi
+if [ "$auday_command" = data-root ] && [ "$auday_command_option" = --clear ] && [ "$auday_command_words" -eq 2 ]; then
     # Needs no runtime, so it still works while a saved root's drive is disconnected.
     /bin/rm -f "$auday_app_root/data-root"
     printf '%s\n' '{"ok":true,"savedDataRoot":null,"nextStep":"run data-root to see the location later commands use"}'
@@ -89,7 +99,7 @@ if [ "$auday_major" -lt 13 ]; then
 fi
 auday_clt=false
 if /usr/bin/xcode-select -p >/dev/null 2>&1; then auday_clt=true; fi
-if [ "${1-}" = check ]; then
+if [ "$auday_command" = check ]; then
     auday_probe_dir="$auday_data_root"
     while [ ! -d "$auday_probe_dir" ]; do auday_probe_dir=$(/usr/bin/dirname "$auday_probe_dir"); done
     auday_free_kb=$(/bin/df -Pk "$auday_probe_dir" | /usr/bin/awk 'NR==2 {print $4}')
@@ -102,15 +112,16 @@ fi
 
 /bin/mkdir -p "$auday_data_root"
 auday_data_root=$(CDPATH= cd -P -- "$auday_data_root" && pwd)
-# Same rule as platform_utils.support_root: a root with its own runtime keeps
-# it; the default and saved archive locations hold only the archive, with their
-# runtimes, caches and models in the hidden application directory; a root given
-# only through --home or AUDAY_HOME is self-contained.
+# Where runtimes, caches and models live. A root with its own Python runtime
+# keeps it; the default and saved archive locations hold only the archive, with
+# their machinery in the hidden application directory; a root given only through
+# --home or AUDAY_HOME is self-contained. The client receives this decision in
+# AUDAY_RUNTIME_ROOT (platform_utils.support_root) instead of deriving it again.
 auday_runtime_root=$auday_data_root
-if [ ! -d "$auday_data_root/runtime" ]; then
+if [ ! -d "$auday_data_root/runtime/python" ]; then
     auday_archive_location=false
     # Choosing an archive location never needs a runtime inside that location.
-    [ "${1-}" = data-root ] && auday_archive_location=true
+    [ "$auday_command" = data-root ] && auday_archive_location=true
     for auday_candidate in "$auday_visible_root" "$auday_saved_root"; do
         case "$auday_candidate" in /*) ;; *) continue ;; esac
         if [ -d "$auday_candidate" ] && [ "$(CDPATH= cd -P -- "$auday_candidate" && pwd)" = "$auday_data_root" ]; then
@@ -190,4 +201,5 @@ case "$auday_python" in "$auday_runtime_root/runtime/python/"*) ;; *)
 esac
 "$auday_python" -I -c 'import ssl, sqlite3, sys; assert sys.version_info[:3] == (3, 12, 15)'
 [ "$#" -gt 0 ] || set -- setup
+export AUDAY_RUNTIME_ROOT="$auday_runtime_root"
 exec "$auday_python" "$auday_script_dir/auday.py" --home "$auday_data_root" "$@"

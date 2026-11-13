@@ -26,7 +26,8 @@ from test_incremental_sync import IncrementalPeer, record
 
 def isolated_environment(user):
     environment = {key: value for key, value in os.environ.items()
-                   if key not in (data_root.ENVIRONMENT_VARIABLE, "PYTHONPATH", "PYTHONHOME")}
+                   if key not in (data_root.ENVIRONMENT_VARIABLE, platform_utils.RUNTIME_ROOT_VARIABLE,
+                                  "PYTHONPATH", "PYTHONHOME")}
     environment.update(HOME=str(user), USERPROFILE=str(user), LOCALAPPDATA=str(user / "local"),
                        AUDAY_PROGRESS="0", PYTHONUTF8="1")
     return environment
@@ -90,9 +91,33 @@ class DefaultLocationTests(DataRootTestCase):
         isolated = self.base / "isolated"
         self.assertEqual(platform_utils.support_root(isolated), isolated.resolve())
         # Earlier versions kept runtimes inside a custom root; keep using them.
-        (self.workspace / "runtime").mkdir(parents=True)
+        (self.workspace / "runtime" / "python").mkdir(parents=True)
         data_root.save_home(self.workspace)
         self.assertEqual(platform_utils.support_root(self.workspace), self.workspace.resolve())
+
+    def test_a_phone_profile_named_runtime_does_not_move_the_runtimes(self):
+        Auday(self.visible, profile="runtime").close()
+        self.assertTrue((self.visible / "runtime" / "library.sqlite").is_file())
+        self.assertEqual(platform_utils.support_root(self.visible), self.application)
+
+    def test_the_entrypoint_decision_is_followed_instead_of_derived_again(self):
+        chosen = self.base / "decided by the entrypoint"
+        with patch.dict(os.environ, {platform_utils.RUNTIME_ROOT_VARIABLE: str(chosen)}):
+            for root in (self.visible, self.workspace, self.application):
+                self.assertEqual(platform_utils.support_root(root), chosen.resolve())
+            self.assertTrue(Path(setup_runtime.managed_env(self.visible)["UV_CACHE_DIR"]).is_relative_to(chosen.resolve()))
+        with patch.dict(os.environ, {platform_utils.RUNTIME_ROOT_VARIABLE: "relative"}):
+            self.assertEqual(platform_utils.support_root(self.visible), self.application)
+
+    def test_saving_a_location_leaves_the_users_folder_permissions_alone(self):
+        shared = self.base / "folder the user already shares"
+        shared.mkdir(mode=0o755)
+        before = shared.stat().st_mode
+        with patch.object(data_root, "secure_directory", wraps=platform_utils.secure_directory) as protect:
+            data_root.save_home(shared)
+        protect.assert_called_once_with(self.application)
+        self.assertEqual(shared.stat().st_mode, before)
+        self.assertEqual(data_root.resolve_home(), (shared.resolve(), "saved"))
 
     def test_runtime_alone_at_the_old_location_does_not_keep_it(self):
         (self.application / "runtime" / "python").mkdir(parents=True)
@@ -211,10 +236,15 @@ class CommandLineTests(DataRootTestCase):
         self.assertEqual((code, override["dataRootSource"], override["cache"]), (0, "option", {}))
         self.assertEqual(override["otherLibraries"][0]["dataRoot"], str(self.workspace.resolve()))
 
-        code, asked = self.run_cli("--home", str(self.base / "isolated"), "pair", "--host", "192.0.2.1", "--port", "1")
+        untouched = self.base / "never opened"
+        code, asked = self.run_cli("--home", str(untouched), "pair", "--host", "192.0.2.1", "--port", "1")
         self.assertEqual((code, asked["error"], asked["needsUserDecision"]), (1, "another_library_exists", True))
-        code, unpaired = self.run_cli("--home", str(self.base / "isolated"), "sync")
+        code, unpaired = self.run_cli("--home", str(untouched), "sync")
         self.assertEqual((code, unpaired["error"], unpaired["needsUserDecision"]), (1, "not_paired_here", True))
+        self.assertEqual(unpaired["dataRoot"], str(untouched.resolve()))
+        self.assertFalse(untouched.exists(), "asking the user created a library")
+        code, invalid = self.run_cli("--home", str(untouched), "--profile", "../escape", "sync")
+        self.assertEqual((code, invalid["error"]), (1, "invalid_profile_name"))
 
     def test_disconnected_saved_root_asks_and_can_return_to_the_default(self):
         self.synced_library(self.workspace)
@@ -292,6 +322,7 @@ class ShellEntrypointTests(unittest.TestCase):
         self.assertEqual(self.located(environment={"AUDAY_HOME": "/env/root"}), ("/env/root", "environment"))
         self.assertEqual(self.located("--home", "/explicit/root", environment={"AUDAY_HOME": "/env/root"}),
                          ("/explicit/root", "option"))
+        self.assertEqual(self.located("--home", "/explicit/root", "--profile", "phone"), ("/explicit/root", "option"))
         self.assertFalse((self.home / "Auday").exists())
 
     def test_missing_saved_root_asks_creates_nothing_and_can_be_cleared_without_a_runtime(self):
@@ -302,11 +333,75 @@ class ShellEntrypointTests(unittest.TestCase):
         self.assertEqual(payload["dataRoot"], str(missing))
         self.assertEqual(len(payload["choices"]), 3)
         self.assertFalse(missing.parent.exists())
+        code, payload, _ = self.bootstrap("--profile", "phone", "sync")
+        self.assertEqual((code, payload["error"]), (1, "saved_data_root_unavailable"))
+        code, cleared, stderr = self.bootstrap("--profile", "phone", "data-root", "--clear")
+        self.assertEqual((code, cleared["savedDataRoot"]), (0, None), stderr)
+        self.assertFalse((self.application / "data-root").exists())
+        (self.application / "data-root").write_text(str(missing) + "\n", encoding="utf-8")
         code, cleared, stderr = self.bootstrap("data-root", "--clear")
         self.assertEqual((code, cleared["savedDataRoot"]), (0, None), stderr)
         self.assertFalse((self.application / "data-root").exists())
         self.assertFalse((self.application / "runtime").exists())
         self.assertEqual(self.located(), (str(self.home / "Auday"), "default"))
+
+    def fake_runtime(self, root):
+        """A stand-in uv and Python, so the real script runs to its final exec offline."""
+        with (SCRIPTS / "runtime-assets.tsv").open(encoding="utf-8") as manifest:
+            rows = [line.rstrip("\n").split("\t") for line in manifest]
+        for row in rows:
+            if row[0] == "uv" and row[9] == "macos":
+                directory = root / "runtime" / row[5]
+                (directory / row[6]).mkdir(parents=True)
+                (directory / ".auday-archive-sha256").write_text(row[3] + "\n", encoding="utf-8")
+                uv = directory / row[6] / row[7]
+                uv.write_text('#!/bin/sh\nprintf \'%s\\n\' "$UV_PYTHON_INSTALL_DIR/fake/bin/python3"\n', encoding="utf-8")
+                uv.chmod(0o755)
+        python = root / "runtime" / "python" / "fake" / "bin" / "python3"
+        python.parent.mkdir(parents=True)
+        # Passes the version probe, then reports what the client would receive.
+        python.write_text('#!/bin/sh\n[ "$1" = -I ] && exit 0\nshift\nprintf \'%s\\n\' "$AUDAY_RUNTIME_ROOT" "$@"\n',
+                          encoding="utf-8")
+        python.chmod(0o755)
+
+    def launched(self, *arguments):
+        """(runtime root, client arguments) the real entrypoint hands to the client."""
+        result = subprocess.run(
+            ["/bin/sh", str(SCRIPTS / "bootstrap.sh"), *arguments],
+            # An unreachable proxy keeps a wrong decision from downloading a real runtime.
+            env={"PATH": "/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(self.home),
+                 "https_proxy": "http://127.0.0.1:9", "AUDAY_RUNTIME_ROOT": "/stale/value"},
+            capture_output=True, text=True, encoding="utf-8", timeout=60,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = result.stdout.splitlines()
+        return lines[0], lines[1:]
+
+    def test_entrypoint_keeps_runtimes_out_of_archive_locations_and_tells_the_client(self):
+        self.fake_runtime(self.application)
+        visible, application = str((self.home / "Auday").resolve()), str(self.application.resolve())
+        self.assertEqual(self.launched(), (application, ["--home", visible, "setup"]))
+        # A phone profile that happens to be called runtime is not a runtime.
+        (self.home / "Auday" / "runtime").mkdir()
+        self.assertEqual(self.launched("--profile", "runtime", "status"),
+                         (application, ["--home", visible, "--profile", "runtime", "status"]))
+        # Choosing a new location, with or without --profile, installs nothing inside it.
+        for prefix in ((), ("--profile", "phone")):
+            chosen = self.base / ("external drive " + str(len(prefix))) / "Auday"
+            runtime, forwarded = self.launched("--home", str(chosen), *prefix, "data-root", "--save")
+            self.assertEqual(runtime, application)
+            self.assertEqual(forwarded, ["--home", str(chosen.resolve()), *prefix, "data-root", "--save"])
+            self.assertEqual(list(chosen.iterdir()), [])
+            # Once saved, later commands keep the archive there and the runtime hidden.
+            (self.application / "data-root").write_text(str(chosen) + "\n", encoding="utf-8")
+            self.assertEqual(self.launched("status"), (application, ["--home", str(chosen.resolve()), "status"]))
+            (self.application / "data-root").unlink()
+
+    def test_entrypoint_keeps_a_root_that_already_has_its_own_runtime(self):
+        own = self.base / "self contained"
+        self.fake_runtime(own)
+        (self.application / "data-root").write_text(str(own) + "\n", encoding="utf-8")
+        self.assertEqual(self.launched("status"), (str(own.resolve()), ["--home", str(own.resolve()), "status"]))
 
 
 if __name__ == "__main__":

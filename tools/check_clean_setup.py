@@ -302,15 +302,17 @@ def verify_default_location(run, home, output, windows):
     assert place(status, "default") == visible and status["cache"] == {}, status
     assert sorted(path.name for path in visible.iterdir()) == ["default"], "Runtimes leaked into the archive folder"
 
-    saved = run("data-root", "--save", home=chosen)
+    # --profile before the command must not change where the runtime is prepared.
+    saved = run("--profile", "default", "data-root", "--save", home=chosen)
     assert Path(saved["runtimeRoot"]).resolve() == hidden, saved
+    assert list(chosen.iterdir()) == [], "Saving a location put files in it"
     assert place(run("status", home=None), "saved") == chosen.resolve()
     assert not (chosen / "runtime").exists(), "A saved archive location received a runtime"
     chosen.rename(chosen.with_name("unplugged drive"))
     asked = run("status", home=None, expected_exit=1)
     assert asked["error"] == "saved_data_root_unavailable" and asked["needsUserDecision"], asked
     assert not chosen.exists(), "A disconnected archive location was recreated"
-    assert run("data-root", "--clear", home=None)["savedDataRoot"] is None
+    assert run("--profile", "default", "data-root", "--clear", home=None)["savedDataRoot"] is None
     assert place(run("status", home=None), "default") == visible
     return {"archive": "home/Auday", "runtimesHidden": True, "savedLocationFollowed": True,
             "disconnectedLocationAsked": True}

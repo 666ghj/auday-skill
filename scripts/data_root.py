@@ -19,7 +19,7 @@ import os
 from pathlib import Path
 import sqlite3
 
-from platform_utils import default_home, secure_directory, support_root, visible_home
+from platform_utils import default_home, saved_data_root_text, secure_directory, support_root, visible_home
 
 ENVIRONMENT_VARIABLE = "AUDAY_HOME"
 SETTING_NAME = "data-root"
@@ -39,12 +39,8 @@ class DecisionRequired(ValueError):
                 "needsUserDecision": True, **self.details}
 
 
-def application_home():
-    return default_home()
-
-
 def setting_path():
-    return application_home() / SETTING_NAME
+    return default_home() / SETTING_NAME
 
 
 def _absolute(value, error):
@@ -64,12 +60,7 @@ def environment_home():
 
 
 def saved_home():
-    try:
-        text = setting_path().read_text(encoding="utf-8-sig")
-    except FileNotFoundError:
-        return None
-    # The entrypoints read exactly the first line, so this does too.
-    value = text.split("\n", 1)[0].rstrip("\r")
+    value = saved_data_root_text()
     return _absolute(value, "saved_data_root_must_be_absolute_run_data_root_clear") if value else None
 
 
@@ -85,7 +76,7 @@ def has_pairing(root):
 
 def legacy_home():
     """The earlier default archive location, when it is still the one in use."""
-    legacy = application_home()
+    legacy = default_home()
     if has_pairing(legacy) and not has_pairing(visible_home()):
         return legacy
     return None
@@ -148,9 +139,11 @@ def save_home(home):
     if home == _canonical(visible_home()) and legacy_home() is None:
         clear_home()
         return
-    # The saved location exists from now on; a later absence means a disconnected drive.
-    secure_directory(home)
-    secure_directory(application_home())
+    # The saved location exists from now on; a later absence means a disconnected
+    # drive. It may be a folder the user already shares, so only create it: its
+    # permissions are theirs. Each profile folder inside is protected separately.
+    home.mkdir(parents=True, exist_ok=True)
+    secure_directory(default_home())
     target = setting_path()
     temporary = target.with_name(SETTING_NAME + ".tmp")
     temporary.write_bytes((str(home) + "\n").encode("utf-8"))
@@ -190,7 +183,7 @@ def profile_state(root):
 
 def known_roots():
     roots = []
-    for find in (environment_home, saved_home, visible_home, application_home):
+    for find in (environment_home, saved_home, visible_home, default_home):
         try:
             value = find()
         except ValueError:
@@ -235,6 +228,24 @@ def ensure_single_library(home, profile, allow_new=False):
                 {"choice": "start_separate_library",
                  "detail": "Repeat the command with --new-library. It needs pairing and a first full sync; "
                            "the existing library is not changed."},
+            ],
+        )
+
+
+def ensure_paired_here(home, profile):
+    """Ask before `sync` reports a plain not_paired while this profile is paired elsewhere."""
+    if (_canonical(home) / profile / "connection.json").is_file():
+        return
+    others = other_libraries(home, profile)
+    if others:
+        raise DecisionRequired(
+            "not_paired_here", "this location is not paired, but this phone profile has a library elsewhere",
+            dataRoot=str(_canonical(home)), otherLibraries=others,
+            choices=[
+                {"choice": "use_existing_library",
+                 "detail": "--home <that dataRoot> data-root --save, then sync there."},
+                {"choice": "start_separate_library",
+                 "detail": "pair-window ... --new-library here, then sync; the first sync is full."},
             ],
         )
 

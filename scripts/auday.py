@@ -1356,10 +1356,17 @@ def main():
             result = semantic_search.search(root, args.query, args.kind, args.date, args.limit)
         dump(result)
         return
+    if args.command in ("pair", "pair-window", "sync"):
+        # Ask before Auday() creates a profile folder and an empty library here.
+        if not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", args.profile):
+            raise ValueError("invalid_profile_name")
+        if args.command == "sync":
+            data_root.ensure_paired_here(args.home, args.profile)
+        else:
+            data_root.ensure_single_library(args.home, args.profile, args.new_library)
     app = Auday(args.home, args.profile)
     try:
         if args.command in ["pair", "pair-window"]:
-            data_root.ensure_single_library(args.home, args.profile, args.new_library)
             if args.command == "pair-window":
                 bridge_command()
                 command = [
@@ -1416,19 +1423,6 @@ def main():
             subprocess.run(command, check=True)
             atomic_json(app.root / "connection.json", config)
         elif args.command == "sync":
-            if not (app.root / "connection.json").exists():
-                others = data_root.other_libraries(args.home, args.profile)
-                if others:
-                    raise data_root.DecisionRequired(
-                        "not_paired_here", "this location is not paired, but this phone profile has a library elsewhere",
-                        dataRoot=str(app.root.parent), otherLibraries=others,
-                        choices=[
-                            {"choice": "use_existing_library",
-                             "detail": "--home <that dataRoot> data-root --save, then sync there."},
-                            {"choice": "start_separate_library",
-                             "detail": "pair-window ... --new-library here, then sync; the first sync is full."},
-                        ],
-                    )
             dump(app.sync(mode=args.mode))
         elif args.command == "library":
             dump(app.library(language=args.language))

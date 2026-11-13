@@ -43,18 +43,21 @@ class WindowsLauncherTests(unittest.TestCase):
             self.assertEqual(run.call_args.args[0], [str(interpreter), str(SCRIPTS / "auday.py"), *arguments])
             self.assertEqual(run.call_args.kwargs["env"]["UV_PYTHON"], "3.13.16")
 
-    def test_launcher_uses_the_runtime_root_chosen_by_the_entrypoint(self):
+    def test_launcher_follows_the_runtime_root_chosen_by_the_entrypoint(self):
         with tempfile.TemporaryDirectory(prefix="auday-launcher-") as folder:
-            runtime, archive = Path(folder) / "hidden application", Path(folder) / "chosen archive \u8bb0\u5fc6"
+            hidden, archive = Path(folder) / "hidden application", Path(folder) / "chosen archive \u8bb0\u5fc6"
             arguments = ["--home", str(archive), "data-root", "--save"]
-            interpreter = runtime / "runtime/windows-link/venv/Scripts/python.exe"
-            with patch.object(bootstrap_windows.sys, "platform", "win32"), \
-                    patch.object(bootstrap_windows, "ensure_windows_link", return_value=interpreter) as ensure, \
+            interpreter = hidden.resolve() / "runtime/windows-link/venv/Scripts/python.exe"
+            with patch.dict(os.environ, {"AUDAY_RUNTIME_ROOT": str(hidden)}), \
+                    patch.object(bootstrap_windows.sys, "platform", "win32"), \
+                    patch.object(bootstrap_windows, "ensure_windows_link", return_value=interpreter), \
                     patch.object(bootstrap_windows.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as run:
-                self.assertEqual(bootstrap_windows.main(["--runtime-root", str(runtime), *arguments]), 0)
-            ensure.assert_called_once_with(runtime.resolve(), python_path=sys.executable)
+                self.assertEqual(bootstrap_windows.main(arguments), 0)
+                self.assertEqual(runtime.windows_link_python(archive), interpreter)
             self.assertEqual(run.call_args.args[0], [str(interpreter), str(SCRIPTS / "auday.py"), *arguments])
-            self.assertTrue(run.call_args.kwargs["env"]["UV_CACHE_DIR"].startswith(str(runtime.resolve())))
+            environment = run.call_args.kwargs["env"]
+            self.assertTrue(environment["UV_CACHE_DIR"].startswith(str(hidden.resolve())))
+            self.assertEqual(environment["AUDAY_RUNTIME_ROOT"], str(hidden))
 
     def test_connection_setup_installs_only_hash_locked_wheels_and_reuses_probe(self):
         with tempfile.TemporaryDirectory(prefix="auday-link-setup-") as folder:
