@@ -75,6 +75,8 @@ def saved_home():
 
 def has_pairing(root):
     """Any profile directory under root that completed pairing."""
+    if root is None:
+        return False
     try:
         return any((child / "connection.json").is_file() for child in Path(root).iterdir() if child.is_dir())
     except OSError:
@@ -244,10 +246,16 @@ def describe(home, source, profile):
     except DecisionRequired as error:
         without_home = {"dataRoot": error.details["dataRoot"], "source": "saved",
                         "error": error.code}
+    except ValueError as error:
+        without_home = {"dataRoot": None, "source": None, "error": str(error).split(":", 1)[0]}
     try:
         saved = saved_home()
     except ValueError:
         saved = None
+    try:
+        default = str(_canonical(visible_home()))
+    except ValueError:
+        default = None
     return {
         "dataRoot": str(_canonical(home)),
         "source": source,
@@ -257,6 +265,6 @@ def describe(home, source, profile):
         "withoutHomeOption": without_home,
         "savedDataRoot": str(saved) if saved else None,
         "environmentDataRoot": os.environ.get(ENVIRONMENT_VARIABLE) or None,
-        "defaultDataRoot": str(_canonical(visible_home())),
+        "defaultDataRoot": default,
         "otherLibraries": other_libraries(home, profile),
     }

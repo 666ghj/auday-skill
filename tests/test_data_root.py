@@ -234,6 +234,28 @@ class CommandLineTests(DataRootTestCase):
                          (str(self.visible), "default", str(self.application)))
 
 
+class NoHomeFolderTests(unittest.TestCase):
+    """Service accounts and stripped environments may have no home folder at all."""
+
+    def test_explicit_roots_still_work_and_defaults_report_a_clear_error(self):
+        with tempfile.TemporaryDirectory(prefix="auday-no-home-") as folder, \
+                patch.dict(os.environ, {"AUDAY_PROGRESS": "0"}), \
+                patch.object(Path, "home", side_effect=RuntimeError("Could not determine home directory.")):
+            for name in ("HOME", "USERPROFILE", "LOCALAPPDATA", "AUDAY_HOME"):
+                os.environ.pop(name, None)
+            root = Path(folder) / "explicit root"
+            self.assertEqual(platform_utils.support_root(root), root.resolve())
+            self.assertTrue(Path(setup_runtime.managed_env(root)["UV_CACHE_DIR"]).is_relative_to(root.resolve()))
+            self.assertEqual(data_root.resolve_home(root), (root, "option"))
+            with self.assertRaisesRegex(ValueError, "^home_directory_unavailable"):
+                data_root.resolve_home()
+            data_root.ensure_single_library(root, "default")
+            described = data_root.describe(root, "option", "default")
+            self.assertIsNone(described["defaultDataRoot"])
+            self.assertEqual(described["withoutHomeOption"]["error"], "home_directory_unavailable")
+            Auday(root).close()
+
+
 @unittest.skipUnless(sys.platform == "darwin", "bootstrap.sh is the macOS system-shell entrypoint")
 class ShellEntrypointTests(unittest.TestCase):
     def setUp(self):

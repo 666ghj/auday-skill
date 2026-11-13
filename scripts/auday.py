@@ -21,12 +21,11 @@ import uuid
 from contextlib import ExitStack, contextmanager
 from datetime import datetime, timezone
 from progress import muted, report
-from platform_utils import default_home, is_windows, lock_file, unlock_file, secure_directory
+from platform_utils import is_windows, lock_file, unlock_file, secure_directory
 from incremental_sync import body_hash, body_json, fetch_records
 import data_root
 
 HERE = Path(__file__).resolve().parent
-DEFAULT_HOME = default_home()
 AUDIO_CHUNK_BYTES = 262144
 # Accepted by a phone advertising `largeAudioChunks`. As Base64 it still fits
 # one 2 MiB frame.
@@ -210,7 +209,9 @@ class LinkSession:
 
 
 class Auday:
-    def __init__(self, home=DEFAULT_HOME, profile="default", transport=None):
+    def __init__(self, home=None, profile="default", transport=None):
+        if home is None:
+            home = data_root.resolve_home()[0]
         if not re.fullmatch(r"[a-zA-Z0-9_-]{1,64}", profile):
             raise ValueError("invalid_profile_name")
         self.root = Path(home).expanduser().resolve() / profile

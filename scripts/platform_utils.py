@@ -15,26 +15,34 @@ def is_windows():
     return sys.platform == "win32"
 
 
+def _user_home():
+    try:
+        return Path.home()
+    except RuntimeError:
+        # Service accounts and stripped environments may define no home folder.
+        raise ValueError("home_directory_unavailable: pass --home or set AUDAY_HOME") from None
+
+
 def default_home():
     """Hidden per-user application directory: runtimes, caches, models and the
     saved data-root setting. Earlier versions also kept archives here."""
     if is_windows():
         local = os.environ.get("LOCALAPPDATA")
-        return (Path(local) if local else Path.home() / "AppData" / "Local") / "AudayWorkflow"
-    return Path.home() / "Library" / "Application Support" / "AudayWorkflow"
+        return (Path(local) if local else _user_home() / "AppData" / "Local") / "AudayWorkflow"
+    return _user_home() / "Library" / "Application Support" / "AudayWorkflow"
 
 
 def visible_home():
     """Default archive location the user can find: a folder in their home
     directory, outside Documents/Desktop folders that iCloud or OneDrive often sync."""
-    return Path.home() / "Auday"
+    return _user_home() / "Auday"
 
 
 def saved_data_root():
     """The archive location saved by `data-root --save`, if any (unvalidated)."""
     try:
         value = (default_home() / "data-root").read_text(encoding="utf-8-sig").split("\n", 1)[0].rstrip("\r")
-    except OSError:
+    except (OSError, ValueError):
         return None
     return Path(value) if value and Path(value).is_absolute() else None
 
@@ -49,11 +57,19 @@ def support_root(root):
     self-contained. Applying this twice gives the same result.
     """
     resolved = Path(root).expanduser().resolve()
-    if (resolved / "runtime").is_dir() or resolved == default_home().expanduser().resolve():
+    if (resolved / "runtime").is_dir():
         return resolved
-    archives = [visible_home(), saved_data_root()]
+    try:
+        application = default_home().expanduser().resolve()
+        archives = [visible_home(), saved_data_root()]
+    except ValueError:
+        # Without a home folder there is no default or saved location, so the
+        # explicit root is self-contained.
+        return resolved
+    if resolved == application:
+        return resolved
     if any(path is not None and resolved == path.expanduser().resolve() for path in archives):
-        return default_home().expanduser().resolve()
+        return application
     return resolved
 
 def venv_python(directory):
