@@ -31,8 +31,10 @@ def ensure_windows_crt(root, destination, *, architecture="x86_64", openmp=False
     """Use only the official pinned release files; no global installer or audio setup."""
     from setup_runtime import download_asset, extract_zip, file_hash
 
+    from platform_utils import support_root
+
     asset = crt_asset(architecture)
-    root = Path(root).expanduser().resolve()
+    root = support_root(root)
     destination = Path(destination).expanduser().absolute()
     if destination.is_symlink() or not destination.resolve().is_relative_to(root):
         raise ValueError("windows_runtime_destination_outside_private_setup")

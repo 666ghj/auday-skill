@@ -279,6 +279,45 @@ def audit_windows_dependencies(executables, data_root, system_root, expected_arc
     return sorted(result, key=lambda row: row["binary"])
 
 
+def verify_default_location(run, home, output, windows):
+    """Without --home the archive is visible in the user's home folder, runtimes stay
+    hidden, a saved location is used by later commands, and a disconnected one asks."""
+    visible = (home / "Auday").resolve()
+    hidden = (home / "local/AudayWorkflow" if windows
+              else home / "Library/Application Support/AudayWorkflow").resolve()
+    chosen = output / "chosen archive 档案"
+
+    def place(result, source=None):
+        assert source is None or result.get("dataRootSource", result.get("source")) == source, result
+        return Path(result["dataRoot"]).resolve()
+
+    assert place(run("check", home=None), "default") == visible
+    assert not visible.exists(), "check created the archive folder"
+    doctor = run("doctor", home=None)
+    assert place(doctor, "default") == visible
+    assert Path(doctor["runtimeRoot"]).resolve() == hidden, doctor
+    assert doctor["capabilities"]["core"]["pythonManagedBySetup"]
+    assert (hidden / "runtime").is_dir()
+    status = run("status", home=None)
+    assert place(status, "default") == visible and status["cache"] == {}, status
+    assert sorted(path.name for path in visible.iterdir()) == ["default"], "Runtimes leaked into the archive folder"
+
+    # --profile before the command must not change where the runtime is prepared.
+    saved = run("--profile", "default", "data-root", "--save", home=chosen)
+    assert Path(saved["runtimeRoot"]).resolve() == hidden, saved
+    assert list(chosen.iterdir()) == [], "Saving a location put files in it"
+    assert place(run("status", home=None), "saved") == chosen.resolve()
+    assert not (chosen / "runtime").exists(), "A saved archive location received a runtime"
+    chosen.rename(chosen.with_name("unplugged drive"))
+    asked = run("status", home=None, expected_exit=1)
+    assert asked["error"] == "saved_data_root_unavailable" and asked["needsUserDecision"], asked
+    assert not chosen.exists(), "A disconnected archive location was recreated"
+    assert run("--profile", "default", "data-root", "--clear", home=None)["savedDataRoot"] is None
+    assert place(run("status", home=None), "default") == visible
+    return {"archive": "home/Auday", "runtimesHidden": True, "savedLocationFollowed": True,
+            "disconnectedLocationAsked": True}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True, help="New directory outside the repository")
@@ -323,20 +362,21 @@ def main():
         report["elapsedSeconds"] = round(time.monotonic() - started, 3)
         (output / "report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
 
-    def run(*arguments):
+    def run(*arguments, home=data, expected_exit=0):
         begin = time.monotonic()
         step = {"command": arguments[0], "status": "running"}
         steps.append(step)
         save_report()
+        selected = ["--home", str(home)] if home is not None else []
         result = subprocess.run(
-            [*launcher, "--home", str(data), *arguments], cwd=empty_home,
+            [*launcher, *selected, *arguments], cwd=empty_home,
             env=environment, stdout=subprocess.PIPE, text=True, encoding="utf-8", timeout=1800,
         )
         step.update({"seconds": round(time.monotonic() - begin, 3), "exitCode": result.returncode})
         with (output / "command-log.txt").open("a", encoding="utf-8") as log:
             log.write(json.dumps({"command": list(arguments), "stdout": result.stdout,
                                   "exitCode": result.returncode}) + "\n")
-        if result.returncode:
+        if result.returncode != expected_exit:
             print(result.stdout, file=sys.stderr)
             setup_log = data / "runtime/audio/setup.log"
             if setup_log.is_file():
@@ -370,6 +410,7 @@ def main():
                 base_executables, data, expected_architecture,
             )
         assert not (data / "models").exists(), "Base preparation downloaded optional models"
+        report["defaultArchiveLocation"] = verify_default_location(run, empty_home, output, windows)
         before = run("setup")
         assert before["recommendSemantic"] and not before["audio"]["installed"]
         run("setup", "--defer-semantic")

@@ -86,8 +86,10 @@ Agent はキーワード検索に加え、概念や言い換えを探す[ロー�
 
 | OS | 既定のデータベースの保存先 |
 | --- | --- |
-| Windows | `%LOCALAPPDATA%\AudayWorkflow\default\library.sqlite` |
-| Mac | `~/Library/Application Support/AudayWorkflow/default/library.sqlite` |
+| Windows | `%USERPROFILE%\Auday\default\library.sqlite` |
+| Mac | `~/Auday/default/library.sqlite` |
+
+アーカイブのフォルダーはそのまま開いて確認でき、`library/` には読みやすい Markdown のアーカイブがあります。外付けドライブなど別の場所に保存する場合は、`data-root --save` で一度設定すると、以後のコマンドはその保存先を使います。実行環境とモデルは非表示のアプリケーションフォルダーに保存します。以前のバージョンのインストールは、既存の保存先を引き続き使います。
 
 モデル、設定、インデックスもローカルに保存します。まずテキストを同期し、音声は必要に応じて取得します。接続を無効にすると以後の読み取りを防げますが、別のデバイスにダウンロード済みのコピーを回収することはできません。
 

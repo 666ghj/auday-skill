@@ -4,7 +4,7 @@ Validate the installed package, then test a compatible Auday iPhone build separa
 
 ## Clean runtime setup
 
-Use a newly installed copy of the skill and a new empty private data root. Do not seed it with models, package caches, a database, pairing, or configuration from a developer's working installation. Record OS/architecture and any system tools already present. An isolated data root on a developer computer is not a factory-reset OS. Use the entrypoint for the platform being tested; do not infer Windows behavior from a Mac run.
+Use a newly installed copy of the skill and a new empty private data root. Do not seed it with models, package caches, a database, pairing, or configuration from a developer's working installation. Record OS/architecture and any system tools already present. An isolated data root on a developer computer is not a factory-reset OS. If that computer already has a paired Auday library, pairing in the isolated root requires `--new-library`; this leaves the existing library untouched. Use the entrypoint for the platform being tested; do not infer Windows behavior from a Mac run.
 
 On macOS, limit command lookup to system tools so Homebrew and other developer-installed executables cannot satisfy requirements accidentally:
 
@@ -40,6 +40,7 @@ For each platform, replace `<auday>` below with its full bootstrap prefix and `-
 Verify the following without reading personal Auday data:
 
 - `check` succeeds without Python, does not download, and reports capability prerequisites.
+- Without `--home` and with an empty user home, `check` reports `~/Auday` (`%USERPROFILE%\Auday`) as the default archive location, `doctor` installs runtimes only in the hidden application directory, a saved location is followed by later commands, and a disconnected saved location returns a user decision without recreating it. `tools/check_clean_setup.py` verifies this sequence.
 - The first real setup obtains private `uv` and managed Python under the isolated data root. It does not depend on a global Python, Homebrew, WSL, MSVC installation, or pre-existing model paths.
 - A new installation shows the semantic recommendation and the expected unpaired/empty-library state.
 - Deferring semantic setup records the choice; another setup invocation respects it without downloading weights or repeating the recommendation. A later explicit semantic request still works.

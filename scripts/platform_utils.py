@@ -15,11 +15,72 @@ def is_windows():
     return sys.platform == "win32"
 
 
+def _user_home():
+    try:
+        return Path.home()
+    except RuntimeError:
+        # Service accounts and stripped environments may define no home folder.
+        raise ValueError("home_directory_unavailable: pass --home or set AUDAY_HOME") from None
+
+
 def default_home():
+    """Hidden per-user application directory: runtimes, caches, models and the
+    saved data-root setting. Earlier versions also kept archives here."""
     if is_windows():
         local = os.environ.get("LOCALAPPDATA")
-        return (Path(local) if local else Path.home() / "AppData" / "Local") / "AudayWorkflow"
-    return Path.home() / "Library" / "Application Support" / "AudayWorkflow"
+        return (Path(local) if local else _user_home() / "AppData" / "Local") / "AudayWorkflow"
+    return _user_home() / "Library" / "Application Support" / "AudayWorkflow"
+
+
+def visible_home():
+    """Default archive location the user can find: a folder in their home
+    directory, outside Documents/Desktop folders that iCloud or OneDrive often sync."""
+    return _user_home() / "Auday"
+
+
+RUNTIME_ROOT_VARIABLE = "AUDAY_RUNTIME_ROOT"
+
+
+def saved_data_root_text():
+    """First line of the `data-root` setting, or None when nothing is saved."""
+    try:
+        text = (default_home() / "data-root").read_text(encoding="utf-8-sig")
+    except FileNotFoundError:
+        return None
+    # The entrypoints read exactly the first line, so this does too.
+    return text.split("\n", 1)[0].rstrip("\r") or None
+
+
+def support_root(root):
+    """Where a data root keeps runtimes, caches and models.
+
+    bootstrap.sh and bootstrap.ps1 decide this before Python exists and pass
+    their decision in AUDAY_RUNTIME_ROOT, so the client never disagrees with
+    the runtime it is running from. Without an entrypoint (auday.py called
+    directly, or tests) the same rule is applied here: a root that already has
+    its own Python runtime keeps using it; otherwise the default and saved
+    archive locations hold only the archive, with their machinery in the
+    hidden application directory; any other root is self-contained.
+    """
+    chosen = os.environ.get(RUNTIME_ROOT_VARIABLE)
+    if chosen and Path(chosen).is_absolute():
+        return Path(chosen).resolve()
+    resolved = Path(root).expanduser().resolve()
+    if (resolved / "runtime" / "python").is_dir():
+        return resolved
+    try:
+        application = default_home().expanduser().resolve()
+        archives = [visible_home()]
+        saved = saved_data_root_text()
+    except (OSError, ValueError):
+        # Without a home folder there is no default or saved location, so the
+        # explicit root is self-contained.
+        return resolved
+    if saved and Path(saved).is_absolute():
+        archives.append(Path(saved))
+    if resolved != application and any(resolved == path.expanduser().resolve() for path in archives):
+        return application
+    return resolved
 
 
 def venv_python(directory):

@@ -9,7 +9,7 @@ import sys
 import tempfile
 
 from progress import report
-from platform_utils import physical_memory_bytes, secure_directory, venv_python
+from platform_utils import physical_memory_bytes, secure_directory, support_root, venv_python
 from setup_runtime import (
     command_line_tools_status, download_asset, file_hash,
     install_runtime, require_supported_system, runtime_asset,
@@ -49,7 +49,8 @@ def _save_bytes(path, value):
 
 
 def _python_managed_by_setup(root):
-    private = (Path(root) / "runtime/python").resolve()
+    root = support_root(root)
+    private = (root / "runtime/python").resolve()
     executable = Path(sys.executable).resolve()
     if executable.is_relative_to(private):
         return True
@@ -158,7 +159,7 @@ def setup_semantic(root, profile="default"):
     report("Preparing local semantic search", force=True)
     server = install_runtime(root, "llama")
     model = download_asset(
-        MODEL_URL, root / "models/embeddinggemma-300M-Q8_0.gguf", MODEL_SHA,
+        MODEL_URL, support_root(root) / "models/embeddinggemma-300M-Q8_0.gguf", MODEL_SHA,
         MODEL_BYTES, label="Downloading semantic model",
     )
     config_path = selected / "semantic-config.json"

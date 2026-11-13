@@ -3,14 +3,82 @@
 set -eu
 umask 077
 auday_script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-auday_data_root="$HOME/Library/Application Support/AudayWorkflow"
+# Data root order, matching scripts/data_root.py: --home, AUDAY_HOME, the saved
+# one-line setting written by `data-root --save`, the earlier default location while it
+# holds a paired profile and the visible default does not, then ~/Auday.
+auday_app_root="$HOME/Library/Application Support/AudayWorkflow"
+auday_visible_root="$HOME/Auday"
+auday_json() { printf '%s' "$1" | /usr/bin/sed 's/\\/\\\\/g; s/"/\\"/g'; }
+auday_has_pairing() {
+    for auday_pairing in "$1"/*/connection.json; do
+        [ -f "$auday_pairing" ] && return 0
+    done
+    return 1
+}
+auday_explicit_root=
 if [ "${1-}" = "--home" ]; then
     [ "$#" -ge 2 ] || { printf '%s\n' 'Auday: --home needs a directory.' >&2; exit 2; }
-    auday_data_root=$2
+    auday_explicit_root=$2
     shift 2
 fi
+# The command follows an optional --profile <name>, as in bootstrap.ps1.
+if [ "${1-}" = "--profile" ] && [ "$#" -ge 3 ]; then
+    auday_command=$3
+    auday_command_option=${4-}
+    auday_command_words=$(($# - 2))
+else
+    auday_command=${1-}
+    auday_command_option=${2-}
+    auday_command_words=$#
+fi
+if [ "$auday_command" = data-root ] && [ "$auday_command_option" = --clear ] && [ "$auday_command_words" -eq 2 ]; then
+    # Needs no runtime, so it still works while a saved root's drive is disconnected.
+    /bin/rm -f "$auday_app_root/data-root"
+    printf '%s\n' '{"ok":true,"savedDataRoot":null,"nextStep":"run data-root to see the location later commands use"}'
+    exit 0
+fi
+auday_saved_root=
+if [ -f "$auday_app_root/data-root" ]; then
+    IFS= read -r auday_saved_root < "$auday_app_root/data-root" || true
+    auday_saved_root=${auday_saved_root%"$(printf '\r')"}
+fi
+auday_data_root=$auday_visible_root
+auday_root_source=default
+if [ -n "$auday_explicit_root" ]; then
+    auday_data_root=$auday_explicit_root
+    auday_root_source=option
+elif [ -n "${AUDAY_HOME-}" ]; then
+    auday_data_root=$AUDAY_HOME
+    auday_root_source=environment
+else
+    if [ -n "$auday_saved_root" ]; then
+        case "$auday_saved_root" in /*) ;; *)
+            printf '%s\n' '{"ok":false,"error":"saved_data_root_must_be_absolute","nextStep":"run data-root --clear"}'
+            exit 1 ;;
+        esac
+        case "$auday_saved_root" in *[[:cntrl:]]*)
+            printf '%s\n' '{"ok":false,"error":"saved_data_root_must_not_contain_control_characters","nextStep":"run data-root --clear"}'
+            exit 1 ;;
+        esac
+        # A saved root existed when it was saved. If it is missing, its drive is
+        # probably disconnected: ask the user instead of starting a new library.
+        if [ ! -d "$auday_saved_root" ]; then
+            printf '{"ok":false,"error":"saved_data_root_unavailable","message":"the saved archive location cannot be found; its drive may be disconnected","needsUserDecision":true,"dataRoot":"%s","choices":[{"choice":"reconnect_and_retry","detail":"Reconnect the drive or folder, then repeat the same command."},{"choice":"use_another_location","detail":"Start or select a library elsewhere: --home <absolute-path> data-root --save. A new location needs pairing and a first full sync; the old archive is left untouched."},{"choice":"return_to_default_location","detail":"data-root --clear, then use %s. It needs pairing and a first full sync unless a library is already there."}]}\n' \
+                "$(auday_json "$auday_saved_root")" "$(auday_json "$auday_visible_root")"
+            exit 1
+        fi
+        auday_data_root=$auday_saved_root
+        auday_root_source=saved
+    elif auday_has_pairing "$auday_app_root" && ! auday_has_pairing "$auday_visible_root"; then
+        auday_data_root=$auday_app_root
+        auday_root_source=legacy
+    fi
+fi
 case "$auday_data_root" in /*) ;; *)
-    printf '%s\n' 'Auday: --home must be an absolute directory path.' >&2; exit 2 ;;
+    printf '%s\n' 'Auday: the data root (--home or AUDAY_HOME) must be an absolute directory path.' >&2; exit 2 ;;
+esac
+case "$auday_data_root" in *[[:cntrl:]]*)
+    printf '%s\n' 'Auday: the data root must not contain control characters.' >&2; exit 2 ;;
 esac
 if [ "$(/usr/bin/uname -s)" != Darwin ]; then
     printf '%s\n' '{"ok":false,"error":"macOS_required"}'
@@ -31,25 +99,47 @@ if [ "$auday_major" -lt 13 ]; then
 fi
 auday_clt=false
 if /usr/bin/xcode-select -p >/dev/null 2>&1; then auday_clt=true; fi
-if [ "${1-}" = check ]; then
+if [ "$auday_command" = check ]; then
     auday_probe_dir="$auday_data_root"
     while [ ! -d "$auday_probe_dir" ]; do auday_probe_dir=$(/usr/bin/dirname "$auday_probe_dir"); done
     auday_free_kb=$(/bin/df -Pk "$auday_probe_dir" | /usr/bin/awk 'NR==2 {print $4}')
     auday_memory=$(/usr/sbin/sysctl -n hw.memsize)
-    printf '{"ok":true,"macOS":"%s","architecture":"%s","memoryBytes":%s,"availableDiskBytes":%s,"appleDeveloperToolsSelected":%s,"downloadsStarted":false,"nextStep":"run bootstrap doctor to prepare the private base runtime"}\n' \
-        "$auday_os" "$auday_arch" "$auday_memory" "$((auday_free_kb * 1024))" "$auday_clt"
+    auday_root_json=$(auday_json "$auday_data_root")
+    printf '{"ok":true,"macOS":"%s","architecture":"%s","memoryBytes":%s,"availableDiskBytes":%s,"appleDeveloperToolsSelected":%s,"dataRoot":"%s","dataRootSource":"%s","downloadsStarted":false,"nextStep":"run bootstrap doctor to prepare the private base runtime"}\n' \
+        "$auday_os" "$auday_arch" "$auday_memory" "$((auday_free_kb * 1024))" "$auday_clt" "$auday_root_json" "$auday_root_source"
     exit 0
 fi
 
 /bin/mkdir -p "$auday_data_root"
 auday_data_root=$(CDPATH= cd -P -- "$auday_data_root" && pwd)
+# Where runtimes, caches and models live. A root with its own Python runtime
+# keeps it; the default and saved archive locations hold only the archive, with
+# their machinery in the hidden application directory; a root given only through
+# --home or AUDAY_HOME is self-contained. The client receives this decision in
+# AUDAY_RUNTIME_ROOT (platform_utils.support_root) instead of deriving it again.
+auday_runtime_root=$auday_data_root
+if [ ! -d "$auday_data_root/runtime/python" ]; then
+    auday_archive_location=false
+    # Choosing an archive location never needs a runtime inside that location.
+    [ "$auday_command" = data-root ] && auday_archive_location=true
+    for auday_candidate in "$auday_visible_root" "$auday_saved_root"; do
+        case "$auday_candidate" in /*) ;; *) continue ;; esac
+        if [ -d "$auday_candidate" ] && [ "$(CDPATH= cd -P -- "$auday_candidate" && pwd)" = "$auday_data_root" ]; then
+            auday_archive_location=true
+        fi
+    done
+    if [ "$auday_archive_location" = true ]; then
+        /bin/mkdir -p "$auday_app_root"
+        auday_runtime_root=$(CDPATH= cd -P -- "$auday_app_root" && pwd)
+    fi
+fi
 auday_row=$(/usr/bin/awk -F '\t' -v arch="$auday_arch" '$1=="uv" && $2==arch && $10=="macos" {print}' "$auday_script_dir/runtime-assets.tsv")
 [ -n "$auday_row" ] || { printf '%s\n' 'Auday: runtime manifest entry missing.' >&2; exit 1; }
 auday_tab=$(printf '\t')
 IFS="$auday_tab" read -r auday_component auday_manifest_arch auday_url auday_sha auday_bytes auday_install_dir auday_archive_root auday_executable auday_min_os auday_platform auday_archive_format <<EOF
 $auday_row
 EOF
-auday_uv_dir="$auday_data_root/runtime/$auday_install_dir"
+auday_uv_dir="$auday_runtime_root/runtime/$auday_install_dir"
 auday_uv="$auday_uv_dir/$auday_archive_root/$auday_executable"
 auday_marker="$auday_uv_dir/.auday-archive-sha256"
 auday_stage=""
@@ -58,8 +148,8 @@ if [ -d "$auday_uv_dir" ]; then
     [ -f "$auday_marker" ] && [ "$(cat "$auday_marker")" = "$auday_sha" ] && [ -x "$auday_uv" ] ||
         { printf '%s\n' 'Auday: existing private runtime is incomplete; it was preserved.' >&2; exit 1; }
 else
-    /bin/mkdir -p "$auday_data_root/cache/downloads" "$auday_data_root/runtime"
-    auday_archive="$auday_data_root/cache/downloads/$auday_sha.tar.gz"
+    /bin/mkdir -p "$auday_runtime_root/cache/downloads" "$auday_runtime_root/runtime"
+    auday_archive="$auday_runtime_root/cache/downloads/$auday_sha.tar.gz"
     if [ ! -f "$auday_archive" ]; then
         printf '%s\n' '[Auday] Downloading private setup runtime' >&2
         /usr/bin/curl --fail --location --proto '=https' --proto-redir '=https' \
@@ -77,7 +167,7 @@ else
     [ "$auday_actual" = "$auday_sha" ] ||
         { printf '%s\n' 'Auday: cached runtime failed its integrity check.' >&2; exit 1; }
     printf '%s\n' '[Auday] Installing verified private setup runtime' >&2
-    auday_stage=$(/usr/bin/mktemp -d "$auday_data_root/runtime/.bootstrap.XXXXXX")
+    auday_stage=$(/usr/bin/mktemp -d "$auday_runtime_root/runtime/.bootstrap.XXXXXX")
     # The immutable official archive is verified before the system tar sees it.
     /usr/bin/tar -xzf "$auday_archive" -C "$auday_stage"
     [ -x "$auday_stage/$auday_archive_root/$auday_executable" ] ||
@@ -94,8 +184,8 @@ for auday_env_name in $(/usr/bin/env | /usr/bin/awk -F= '$1 ~ /^(UV_|PIP_)[A-Za-
     unset "$auday_env_name"
 done
 export UV_NO_CONFIG=1
-export UV_CACHE_DIR="$auday_data_root/cache/uv"
-export UV_PYTHON_INSTALL_DIR="$auday_data_root/runtime/python"
+export UV_CACHE_DIR="$auday_runtime_root/cache/uv"
+export UV_PYTHON_INSTALL_DIR="$auday_runtime_root/runtime/python"
 export UV_PYTHON=3.12.15
 export UV_MANAGED_PYTHON=1
 export PYTHONNOUSERSITE=1
@@ -106,9 +196,10 @@ if [ -z "$auday_python" ]; then
     "$auday_uv" --no-config python install cpython@3.12.15 --no-bin
     auday_python=$("$auday_uv" --no-config python find --managed-python cpython@3.12.15)
 fi
-case "$auday_python" in "$auday_data_root/runtime/python/"*) ;; *)
+case "$auday_python" in "$auday_runtime_root/runtime/python/"*) ;; *)
     printf '%s\n' 'Auday: refusing an interpreter outside the private runtime.' >&2; exit 1 ;;
 esac
 "$auday_python" -I -c 'import ssl, sqlite3, sys; assert sys.version_info[:3] == (3, 12, 15)'
 [ "$#" -gt 0 ] || set -- setup
+export AUDAY_RUNTIME_ROOT="$auday_runtime_root"
 exec "$auday_python" "$auday_script_dir/auday.py" --home "$auday_data_root" "$@"

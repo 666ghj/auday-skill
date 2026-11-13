@@ -44,7 +44,11 @@ class PlatformTests(unittest.TestCase):
                 def __init__(self, *_): pass
                 def close(self): pass
             output = io.StringIO()
-            with patch.object(auday, "is_windows", return_value=True), patch.object(auday, "Auday", Client), \
+            # Keep the second-library check away from this computer's real Auday data.
+            user = str(Path(temporary) / "user")
+            with patch.dict(os.environ, {"AUDAY_HOME": "", "HOME": user, "USERPROFILE": user,
+                                         "LOCALAPPDATA": str(Path(user) / "local")}), \
+                 patch.object(auday, "is_windows", return_value=True), patch.object(auday, "Auday", Client), \
                  patch.object(sys, "argv", ["auday.py", "--home", temporary, "pair-window", "--service", "Auday 日本語"]), \
                  patch.object(sys, "stdout", output), patch.object(auday.subprocess, "Popen") as launched, \
                  patch.object(auday.subprocess, "CREATE_NEW_CONSOLE", 0x10, create=True):

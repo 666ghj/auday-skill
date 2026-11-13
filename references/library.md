@@ -8,7 +8,7 @@ SQLite cache can be organized offline.
 
 ## Layout and ownership
 
-Each profile has a `library/` directory beside `library.sqlite`:
+Each profile has a `library/` directory beside `library.sqlite`; by default that is `~/Auday/default/library/` on Mac and `%USERPROFILE%\Auday\default\library\` on Windows (see [archive location](connection.md#archive-location)):
 
 ```text
 library/

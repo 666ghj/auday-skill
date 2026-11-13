@@ -43,6 +43,22 @@ class WindowsLauncherTests(unittest.TestCase):
             self.assertEqual(run.call_args.args[0], [str(interpreter), str(SCRIPTS / "auday.py"), *arguments])
             self.assertEqual(run.call_args.kwargs["env"]["UV_PYTHON"], "3.13.16")
 
+    def test_launcher_follows_the_runtime_root_chosen_by_the_entrypoint(self):
+        with tempfile.TemporaryDirectory(prefix="auday-launcher-") as folder:
+            hidden, archive = Path(folder) / "hidden application", Path(folder) / "chosen archive \u8bb0\u5fc6"
+            arguments = ["--home", str(archive), "data-root", "--save"]
+            interpreter = hidden.resolve() / "runtime/windows-link/venv/Scripts/python.exe"
+            with patch.dict(os.environ, {"AUDAY_RUNTIME_ROOT": str(hidden)}), \
+                    patch.object(bootstrap_windows.sys, "platform", "win32"), \
+                    patch.object(bootstrap_windows, "ensure_windows_link", return_value=interpreter), \
+                    patch.object(bootstrap_windows.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as run:
+                self.assertEqual(bootstrap_windows.main(arguments), 0)
+                self.assertEqual(runtime.windows_link_python(archive), interpreter)
+            self.assertEqual(run.call_args.args[0], [str(interpreter), str(SCRIPTS / "auday.py"), *arguments])
+            environment = run.call_args.kwargs["env"]
+            self.assertTrue(environment["UV_CACHE_DIR"].startswith(str(hidden.resolve())))
+            self.assertEqual(environment["AUDAY_RUNTIME_ROOT"], str(hidden))
+
     def test_connection_setup_installs_only_hash_locked_wheels_and_reuses_probe(self):
         with tempfile.TemporaryDirectory(prefix="auday-link-setup-") as folder:
             root = Path(folder)
@@ -308,6 +324,87 @@ class PowerShellBootstrapTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertFalse(payload["downloadsStarted"])
         self.assertFalse(data_root.exists())
+
+    def resolve_root(self, local, visible, explicit="$null", environment=None):
+        body = (f"$resolved = Get-AudayDataRoot {self.literal(local)} {explicit} {self.literal(visible)}\n"
+                "@{ root = $resolved.Root; source = $resolved.Source; decision = $resolved.Decision }"
+                " | ConvertTo-Json -Compress -Depth 6")
+        clean = {key: value for key, value in os.environ.items() if key != "AUDAY_HOME"}
+        result = self.powershell(body, environment={**clean, **(environment or {})})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(result.stdout)
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows absolute paths")
+    def test_data_root_order_matches_python_including_upgrades(self):
+        local, visible = self.root / "local data", self.root / "profile \u8bb0\u5fc6" / "Auday"
+        application = local / "AudayWorkflow"
+        application.mkdir(parents=True)
+        located = lambda **options: (lambda value: (value["root"], value["source"]))(
+            self.resolve_root(local, visible, **options))
+        self.assertEqual(located(), (str(visible), "default"))
+        (application / "default").mkdir()
+        (application / "default" / "connection.json").write_text("{}", encoding="utf-8")
+        self.assertEqual(located(), (str(application), "legacy"))
+        (visible / "default").mkdir(parents=True)
+        (visible / "default" / "connection.json").write_text("{}", encoding="utf-8")
+        self.assertEqual(located(), (str(visible), "default"))
+        saved = self.root / "saved root \u8bb0\u5fc6"
+        saved.mkdir()
+        (application / "data-root").write_text(str(saved) + "\r\n", encoding="utf-8")
+        self.assertEqual(located(), (str(saved), "saved"))
+        self.assertEqual(located(environment={"AUDAY_HOME": "E:\\from environment"}), ("E:\\from environment", "environment"))
+        self.assertEqual(located(explicit="'D:\\explicit'"), ("D:\\explicit", "option"))
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows absolute paths")
+    def test_missing_saved_root_returns_a_user_decision(self):
+        local, visible = self.root / "local", self.root / "profile" / "Auday"
+        (local / "AudayWorkflow").mkdir(parents=True)
+        missing = self.root / "unplugged drive" / "auday"
+        (local / "AudayWorkflow" / "data-root").write_text(str(missing) + "\n", encoding="utf-8")
+        resolved = self.resolve_root(local, visible)
+        decision = resolved["decision"]
+        self.assertEqual((decision["error"], decision["needsUserDecision"], decision["dataRoot"]),
+                         ("saved_data_root_unavailable", True, str(missing)))
+        self.assertEqual([item["choice"] for item in decision["choices"]],
+                         ["reconnect_and_retry", "use_another_location", "return_to_default_location"])
+        self.assertFalse(missing.parent.exists())
+
+    def entrypoint(self, *arguments, environment):
+        return subprocess.run(
+            [POWERSHELL, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+             str(SCRIPTS / "bootstrap.ps1"), *arguments],
+            env=environment, capture_output=True, text=True, encoding="utf-8", timeout=30,
+        )
+
+    @unittest.skipUnless(sys.platform == "win32", "Windows OS-only entrypoint")
+    def test_check_reports_locations_and_a_missing_root_asks_without_creating_it(self):
+        user, local = self.root / "user \u8bb0\u5fc6", self.root / "local"
+        application = local / "AudayWorkflow"
+        application.mkdir(parents=True)
+        user.mkdir()
+        environment = {key: value for key, value in os.environ.items() if key != "AUDAY_HOME"}
+        environment.update(LOCALAPPDATA=str(local), USERPROFILE=str(user), PATH=str(self.root / "empty-path"))
+        result = self.entrypoint("check", environment=environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual((payload["dataRoot"], payload["dataRootSource"], payload["runtimeRoot"]),
+                         (str(user / "Auday"), "default", str(application)))
+        self.assertFalse((user / "Auday").exists())
+
+        missing = self.root / "unplugged" / "auday"
+        (application / "data-root").write_text(str(missing) + "\n", encoding="utf-8")
+        result = self.entrypoint("status", environment=environment)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual((payload["error"], payload["needsUserDecision"]), ("saved_data_root_unavailable", True))
+        self.assertFalse(missing.parent.exists())
+        self.assertFalse((application / "runtime").exists())
+
+        result = self.entrypoint("data-root", "--clear", environment=environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIsNone(json.loads(result.stdout)["savedDataRoot"])
+        self.assertFalse((application / "data-root").exists())
+        self.assertFalse((application / "runtime").exists())
 
     @unittest.skipUnless(sys.platform == "win32", "native Windows argv and stream behavior")
     def test_native_process_forwards_arguments_stdout_and_exit_status(self):

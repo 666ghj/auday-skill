@@ -15,6 +15,8 @@ def main(arguments=None):
     if len(arguments) < 2 or arguments[0] != "--home":
         raise ValueError("bootstrap_home_required")
     root = Path(arguments[1]).resolve()
+    # ensure_windows_link and managed_env place runtimes through support_root,
+    # which follows the AUDAY_RUNTIME_ROOT decision made by bootstrap.ps1.
     python = ensure_windows_link(root, python_path=sys.executable)
     # Use a subprocess instead of Windows exec emulation so the parent reliably
     # receives the client's final exit status, stdout JSON and stderr progress.
