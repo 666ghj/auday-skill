@@ -87,6 +87,23 @@ class AudioSetupTests(unittest.TestCase):
         for p in self.patches:
             self.addCleanup(p.stop)
 
+    def test_apple_silicon_engine_is_built_for_the_baseline_not_the_build_machine(self):
+        source = self.runtime / audio_setup.MANIFEST["whisperSource"]["directory"]
+        self.whisper.unlink()
+        for machine, portable in (("arm64", True), ("x86_64", False)):
+            with self.subTest(machine=machine):
+                self.mocks[4].reset_mock()
+                self.mocks[5].side_effect = [str(self.cmake)]
+                with patch.object(audio_setup.platform, "machine", return_value=machine):
+                    built = audio_setup._prepare_mac_whisper(
+                        self.runtime, source, self.python, {"PATH": "/usr/bin:/bin"}, self.runtime / "setup.log")
+                self.assertEqual(built, self.whisper)
+                configure, build = (call.args[0] for call in self.mocks[4].call_args_list)
+                self.assertEqual(configure[0], Path(self.cmake))
+                self.assertIn("-DGGML_METAL=ON", configure)
+                self.assertEqual("-DGGML_NATIVE=OFF" in configure, portable)
+                self.assertIn("whisper-cli", build)
+
     def test_fresh_default_installs_one_asr_and_both_speaker_models(self):
         result = audio_setup.setup_audio(self.root)
         self.assertTrue(result["installed"])
