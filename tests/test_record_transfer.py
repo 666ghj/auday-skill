@@ -35,6 +35,7 @@ class SyntheticPeer:
         self.interrupt_after = None
         self.tamper = None
         self.fail_preparation = False
+        self.preparation_error = None
         self.max_frame = 0
 
     def __call__(self, request):
@@ -55,6 +56,8 @@ class SyntheticPeer:
                 capabilities={"onDemandSnapshot": True, "chunkedRecords": True},
                 snapshotCurrent=self.state == "ready",
             )
+            if self.state == "failed" and self.preparation_error is not None:
+                reply["preparationError"] = self.preparation_error
         elif op == "list":
             assert request.get("allowRecordChunks") is True
             reply.update(records=[{
@@ -173,6 +176,32 @@ class RecordTransferTests(unittest.TestCase):
         self.assertEqual(self.peer.prepare_calls, 1)
         self.assertEqual(self.peer.chunk_offsets, [])
         self.assert_old_cache()
+
+    def test_failed_preparation_reports_the_phone_reason(self):
+        self.peer.fail_preparation = True
+        self.peer.preparation_error = "projection:duplicate_highlight_record"
+        with self.assertRaises(auday.SnapshotPreparationFailed) as raised:
+            self.sync()
+        self.assertEqual(str(raised.exception), "snapshot_preparation_failed")
+        self.assertEqual(raised.exception.preparation_error, "projection:duplicate_highlight_record")
+        self.assertEqual(auday.error_payload(raised.exception), {
+            "ok": False, "error": "snapshot_preparation_failed",
+            "preparationError": "projection:duplicate_highlight_record",
+        })
+        self.assertEqual(self.peer.prepare_calls, 1)
+        self.assert_old_cache()
+
+    def test_unexpected_preparation_reason_is_not_repeated(self):
+        for value in (None, 42, "", "projection", "projection:", "projection:line\nbreak",
+                      "projection:caf\u00e9", "stage:" + "x" * 161, "a" * 33 + ":code", "pro jection:code"):
+            error = auday.SnapshotPreparationFailed(value)
+            self.assertIsNone(error.preparation_error, value)
+            self.assertEqual(auday.error_payload(error), {"ok": False, "error": "snapshot_preparation_failed"})
+        for value in ("archive:source_not_ready", "savedNotes:error_CocoaError_256",
+                      "projection:error_NSURLError_-1001",
+                      "projection:error_(unknown context at $1029f).Failure_1"):
+            self.assertEqual(auday.SnapshotPreparationFailed(value).preparation_error, value)
+        self.assertEqual(auday.error_payload(ValueError("snapshot_busy")), {"ok": False, "error": "snapshot_busy"})
 
     def test_preparation_wait_has_a_deadline(self):
         limit = auday.SNAPSHOT_PREPARATION_LIMIT_SECONDS

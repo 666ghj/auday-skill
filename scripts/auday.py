@@ -37,6 +37,10 @@ LARGE_AUDIO_CHUNK_BYTES = 1048576
 # several minutes on the phone.
 SNAPSHOT_PREPARATION_LIMIT_SECONDS = 30 * 60
 SNAPSHOT_PREPARATION_NOTICE_SECONDS = 30
+# The phone's own preparation diagnostic is a `stage:code` pair such as
+# `projection:duplicate_highlight_record`. A fallback code can embed a Swift
+# type name, so the code allows printable ASCII. Anything else is not repeated.
+PREPARATION_ERROR_PATTERN = re.compile(r"[A-Za-z]{1,32}:[ -~]{1,160}")
 # A batch records these against one asset and continues with the next. Any
 # other failure concerns the connection or the snapshot and ends the batch.
 ASSET_FAILURES = frozenset((
@@ -48,6 +52,28 @@ ASSET_FAILURES = frozenset((
 _profile_locks = {}
 _profile_locks_guard = threading.Lock()
 _link_binary = None
+
+
+class SnapshotPreparationFailed(ValueError):
+    """The phone could not prepare its snapshot.
+
+    The error stays `snapshot_preparation_failed`; the phone's reason travels
+    beside it as `preparationError`, only when it has the expected shape.
+    """
+
+    def __init__(self, preparation_error=None):
+        super().__init__("snapshot_preparation_failed")
+        valid = isinstance(preparation_error, str) and PREPARATION_ERROR_PATTERN.fullmatch(preparation_error)
+        self.preparation_error = preparation_error if valid else None
+
+
+def error_payload(error):
+    """The JSON a failed command prints."""
+    payload = {"ok": False, "error": str(error)}
+    preparation_error = getattr(error, "preparation_error", None)
+    if preparation_error:
+        payload["preparationError"] = preparation_error
+    return payload
 
 
 class ProfileOperationLock:
@@ -714,7 +740,7 @@ class Auday:
                     poll["lease"] = token
                 status = self.request(poll)
             if status.get("snapshotState") == "failed":
-                raise ValueError("snapshot_preparation_failed")
+                raise SnapshotPreparationFailed(status.get("preparationError"))
             if status.get("snapshotState") != "ready":
                 raise ValueError("snapshot_not_ready")
             if token is not None:
@@ -947,7 +973,7 @@ class Auday:
                 identities = list(dict.fromkeys(identities))
             else:
                 identities = [row[0] for row in self.db.execute("SELECT id FROM assets ORDER BY id")]
-            assets, failed, stopped = [], [], None
+            assets, failed, stopped, stopped_reason = [], [], None, None
             downloaded = cached = transferred = 0
             for index, identity in enumerate(identities):
                 report("Fetching audio assets", index, len(identities), "assets")
@@ -959,6 +985,7 @@ class Auday:
                     message = str(error) if isinstance(error, ValueError) else type(error).__name__
                     if message.split(":", 1)[0] not in ASSET_FAILURES:
                         stopped = message
+                        stopped_reason = getattr(error, "preparation_error", None)
                         break
                     failed.append({"id": identity, "error": message})
                     continue
@@ -978,6 +1005,8 @@ class Auday:
                 "seconds": round(time.perf_counter() - started, 3),
                 "directory": str(self.root / "audio"),
             }
+            if stopped_reason:
+                summary["preparationError"] = stopped_reason
             if listed:
                 # A whole catalogue can be hundreds of paths; each saved file's
                 # adjacent .asset.json already identifies it.
@@ -1466,5 +1495,5 @@ if __name__ == "__main__":
         dump(decision.payload())
         sys.exit(1)
     except (ValueError, KeyError, OSError, RuntimeError, sqlite3.Error, subprocess.SubprocessError) as error:
-        dump({"ok": False, "error": str(error)})
+        dump(error_payload(error))
         sys.exit(1)

@@ -12,7 +12,9 @@ import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
+import auday
 from auday import Auday
+from unittest.mock import patch
 
 KIB = 1024
 
@@ -185,6 +187,17 @@ class AudioTransferTests(unittest.TestCase):
         self.assertEqual(resumed["bytesDownloaded"], 2 * 600 * KIB - 256 * KIB)
         saved = sorted(path.read_bytes() for path in (app.root / "audio").glob("*.caf"))
         self.assertEqual(saved, sorted(bodies.values()))
+
+    def test_batch_stopped_by_snapshot_preparation_reports_the_phone_reason(self):
+        app = self.client(SyntheticPhone({"a": synthetic_bytes("a", 100 * KIB)}))
+        failure = auday.SnapshotPreparationFailed("projection:duplicate_highlight_record")
+        with patch.object(app, "_audio", side_effect=failure):
+            summary = app.audio_batch()
+        self.assertEqual(summary["stopped"], "snapshot_preparation_failed")
+        self.assertEqual(summary["preparationError"], "projection:duplicate_highlight_record")
+        self.assertFalse(summary["complete"])
+        with patch.object(app, "_audio", side_effect=ValueError("snapshot_busy")):
+            self.assertNotIn("preparationError", app.audio_batch())
 
     def test_cached_batch_needs_no_phone(self):
         bodies = {name: synthetic_bytes(name, 100 * KIB) for name in ("a", "b")}

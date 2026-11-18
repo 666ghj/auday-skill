@@ -121,7 +121,7 @@ With a compatible phone, the audio catalogue is lightweight: the `audio` command
 | `saved_data_root_unavailable` | Ask the user; see [Decisions for the user](#decisions-for-the-user) |
 | `snapshot_changed` | The incomplete snapshot was not committed; sync the current snapshot once |
 | `snapshot_busy` | Other transfers hold the phone's retained snapshots; let them finish, then retry the requested update once |
-| `snapshot_preparation_failed` | Inspect the phone's preparation message; retry sync once after resolving it |
+| `snapshot_preparation_failed` | Report `preparationError` when present: the phone's stage and code, such as `projection:duplicate_highlight_record`. Retry sync once after resolving it. A `projection:invalid_snapshot` or `projection:duplicate_<category>_record` code comes from the phone's saved data and recurs on every retry; report it with the Auday app version instead of retrying again. `audio` batches stopped this way carry the same field |
 | `snapshot_preparation_timed_out` | The phone kept preparing for 30 minutes. Keep the page open and check status; do not start an unbounded retry loop |
 | `record_chunk_hash_mismatch` or `record_hash_mismatch` | The cache was not replaced; retry the sync once |
 | `source_device_changed` | Use a new profile; do not merge unrelated device archives |
