@@ -37,9 +37,10 @@ LARGE_AUDIO_CHUNK_BYTES = 1048576
 # several minutes on the phone.
 SNAPSHOT_PREPARATION_LIMIT_SECONDS = 30 * 60
 SNAPSHOT_PREPARATION_NOTICE_SECONDS = 30
-# The phone's own preparation diagnostic is a fixed `stage:code` pair such as
-# `projection:duplicate_highlight_record`. Anything else is not repeated.
-PREPARATION_ERROR_PATTERN = re.compile(r"[A-Za-z]{1,32}:[A-Za-z0-9_.-]{1,120}")
+# The phone's own preparation diagnostic is a `stage:code` pair such as
+# `projection:duplicate_highlight_record`. A fallback code can embed a Swift
+# type name, so the code allows printable ASCII. Anything else is not repeated.
+PREPARATION_ERROR_PATTERN = re.compile(r"[A-Za-z]{1,32}:[ -~]{1,160}")
 # A batch records these against one asset and continues with the next. Any
 # other failure concerns the connection or the snapshot and ends the batch.
 ASSET_FAILURES = frozenset((
@@ -972,7 +973,7 @@ class Auday:
                 identities = list(dict.fromkeys(identities))
             else:
                 identities = [row[0] for row in self.db.execute("SELECT id FROM assets ORDER BY id")]
-            assets, failed, stopped = [], [], None
+            assets, failed, stopped, stopped_reason = [], [], None, None
             downloaded = cached = transferred = 0
             for index, identity in enumerate(identities):
                 report("Fetching audio assets", index, len(identities), "assets")
@@ -984,6 +985,7 @@ class Auday:
                     message = str(error) if isinstance(error, ValueError) else type(error).__name__
                     if message.split(":", 1)[0] not in ASSET_FAILURES:
                         stopped = message
+                        stopped_reason = getattr(error, "preparation_error", None)
                         break
                     failed.append({"id": identity, "error": message})
                     continue
@@ -1003,6 +1005,8 @@ class Auday:
                 "seconds": round(time.perf_counter() - started, 3),
                 "directory": str(self.root / "audio"),
             }
+            if stopped_reason:
+                summary["preparationError"] = stopped_reason
             if listed:
                 # A whole catalogue can be hundreds of paths; each saved file's
                 # adjacent .asset.json already identifies it.

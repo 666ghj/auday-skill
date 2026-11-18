@@ -192,13 +192,14 @@ class RecordTransferTests(unittest.TestCase):
         self.assert_old_cache()
 
     def test_unexpected_preparation_reason_is_not_repeated(self):
-        for value in (None, 42, "", "projection", "projection:", "projection:has space",
-                      "projection:<script>", "stage:" + "x" * 121, "a" * 33 + ":code"):
+        for value in (None, 42, "", "projection", "projection:", "projection:line\nbreak",
+                      "projection:caf\u00e9", "stage:" + "x" * 161, "a" * 33 + ":code", "pro jection:code"):
             error = auday.SnapshotPreparationFailed(value)
             self.assertIsNone(error.preparation_error, value)
             self.assertEqual(auday.error_payload(error), {"ok": False, "error": "snapshot_preparation_failed"})
         for value in ("archive:source_not_ready", "savedNotes:error_CocoaError_256",
-                      "projection:error_NSURLError_-1001"):
+                      "projection:error_NSURLError_-1001",
+                      "projection:error_(unknown context at $1029f).Failure_1"):
             self.assertEqual(auday.SnapshotPreparationFailed(value).preparation_error, value)
         self.assertEqual(auday.error_payload(ValueError("snapshot_busy")), {"ok": False, "error": "snapshot_busy"})
 
